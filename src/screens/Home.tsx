@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Bell } from 'lucide-react-native';
 import { COLORS, SIZES, FONTS } from '../constants/theme';
-import { Track } from '../core/types';
+import { SearchFilter, Track } from '../core/types';
 import { usePlayer } from '../hooks/usePlayer';
 import { useLibrary } from '../hooks/useLibrary';
 import { MusicService } from '../services/MusicService';
@@ -31,6 +31,8 @@ type SectionDef = {
   kind: 'history' | 'liked' | 'search' | 'albums' | 'related';
   layout: 'h' | 'v' | 'grid';
   query?: string;
+  /** Optional provider-side filter (e.g. 'Albums' returns albums only). */
+  filter?: SearchFilter;
   cardSize?: number;
   radius?: number;
   limit?: number;
@@ -42,11 +44,11 @@ const SECTIONS: SectionDef[] = [
   { key: 'recentlyPlayed', title: 'Recently Played', kind: 'history', layout: 'h', cardSize: 168, radius: SIZES.radius.lg },
   { key: 'quickPicks', title: 'Quick Picks', kind: 'search', layout: 'grid', query: 'top hits playlist', limit: 6 },
   { key: 'trending', title: 'Trending Now', kind: 'search', layout: 'h', query: 'top global chart songs', cardSize: 128, radius: SIZES.radius.md },
-  { key: 'loveSongs', title: 'Romantic Songs', kind: 'search', layout: 'h', query: 'best romantic hindi songs', cardSize: 128, radius: SIZES.radius.md },
+  { key: 'loveSongs', title: 'Love', kind: 'search', layout: 'h', query: 'indian love songs hindi tum hi ho', cardSize: 128, radius: SIZES.radius.md },
   { key: 'partyHits', title: 'Party Hits', kind: 'search', layout: 'h', query: 'best party songs hindi punjabi', cardSize: 128, radius: SIZES.radius.md },
-  { key: 'oldGold', title: 'Bollywood Old Gold', kind: 'search', layout: 'h', query: 'old bollywood classic hits', cardSize: 128, radius: SIZES.radius.md },
-  { key: 'popularAlbums', title: 'Popular Albums', kind: 'albums', layout: 'h', query: 'popular bollywood albums', cardSize: 150, radius: SIZES.radius.lg },
-  { key: 'newReleases', title: 'New Releases', kind: 'search', layout: 'h', query: 'new music releases', cardSize: 150, radius: SIZES.radius.lg },
+  { key: 'oldGold', title: 'Old Gold', kind: 'search', layout: 'h', query: 'old bollywood classic hits', cardSize: 128, radius: SIZES.radius.md },
+  { key: 'popularAlbums', title: 'Popular Albums', kind: 'albums', layout: 'h', query: 'popular bollywood albums', filter: 'Albums', limit: 7, cardSize: 150, radius: SIZES.radius.lg },
+  { key: 'newReleases', title: 'New Releases', kind: 'search', layout: 'h', query: 'new music releases', cardSize: 164, radius: SIZES.radius.lg },
   { key: 'basedOn', title: 'Based on Your Listening', kind: 'related', layout: 'h', cardSize: 128, radius: SIZES.radius.md },
   { key: 'favorites', title: 'Your Favorites', kind: 'liked', layout: 'v', limit: 10 },
   { key: 'listenMore', title: 'Listen More', kind: 'search', layout: 'v', query: 'evergreen bollywood hits', limit: 7 },
@@ -59,6 +61,9 @@ const SECTIONS: SectionDef[] = [
  * are dropped, so we over-fetch and let dataFor() trim to the real limit.
  */
 const HOME_SEARCH_FETCH_LIMIT = 24;
+
+/** Albums are fetched album-only and over-fetched; dataFor() trims to the section limit (7). */
+const HOME_ALBUM_FETCH_LIMIT = 15;
 
 /** Equalizer-style "now playing" badge on cards. */
 const PlayingIndicator: React.FC = () => {
@@ -149,7 +154,10 @@ export default function HomeScreen() {
     const defs = SECTIONS.filter((s) => s.kind === 'search' || s.kind === 'albums');
     const results = await Promise.all(
       defs.map((s) =>
-        MusicService.search(s.query ?? '', { limit: s.kind === 'search' ? HOME_SEARCH_FETCH_LIMIT : 10 })
+        MusicService.search(s.query ?? '', {
+          filter: s.filter,
+          limit: s.kind === 'search' ? HOME_SEARCH_FETCH_LIMIT : HOME_ALBUM_FETCH_LIMIT,
+        })
           .then((r) => ({ key: s.key, kind: s.kind, r }))
           .catch(() => ({ key: s.key, kind: s.kind, r: null }))
       )
@@ -161,7 +169,7 @@ export default function HomeScreen() {
         continue;
       }
       if (kind === 'albums') {
-        map[key] = r.albums.slice(0, 10).map((a) => ({
+        map[key] = r.albums.slice(0, HOME_ALBUM_FETCH_LIMIT).map((a) => ({
           id: a.id,
           title: a.title,
           artist: { id: a.id, name: a.year ? `${a.artist} • ${a.year}` : a.artist },
@@ -385,7 +393,9 @@ const styles = StyleSheet.create({
     marginBottom: SIZES.smd,
   },
   hscroll: { paddingHorizontal: SIZES.md, gap: SIZES.smd },
-  vlist: { paddingHorizontal: SIZES.md },
+  // No horizontal padding here: TrackRow already pads itself by SIZES.md, and
+  // adding it again pushed the artwork to double the screen margin.
+  vlist: {},
   gridWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
