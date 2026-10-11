@@ -19,6 +19,8 @@ providers.register(youtubeResolver, true);
  * Screens call MusicService; MusicService picks the provider. No screen ever
  * imports a provider, an InnerTube helper, or a stream resolver.
  */
+/** Below this many candidates the search backup tops the pool up. */
+const RELATED_MIN_POOL = 10;
 const RELATED_TTL_MS = 30 * 60 * 1000;
 const RELATED_CACHE_MAX = 60;
 
@@ -120,6 +122,17 @@ class MusicServiceImpl {
 
     const request = provider
       .getRelated(track, signal)
+      .then(async (tracks) => {
+        // Backup source: if the related feed gave (almost) nothing, search for
+        // more of the same artist. Search is the path the app already relies
+        // on everywhere, so continuous playback does not hang on one endpoint.
+        if (tracks.length < RELATED_MIN_POOL) {
+          const extra = await this.relatedViaSearch(track, signal);
+          const seen = new Set(tracks.map((t) => t.id));
+          tracks = [...tracks, ...extra.filter((t) => !seen.has(t.id))];
+        }
+        return tracks;
+      })
       .then((tracks) => {
         if (tracks.length) {
           this.relatedCache.set(key, { at: Date.now(), tracks });
@@ -137,6 +150,24 @@ class MusicServiceImpl {
       });
     this.relatedInFlight.set(key, request);
     return request;
+  }
+
+  /** Songs by the same artist, found through plain search. Never throws. */
+  private async relatedViaSearch(track: Track, signal?: AbortSignal): Promise<Track[]> {
+    try {
+      const name = track.artist.name.split(/,|&| feat\.?| ft\.?| x /i)[0].trim();
+      if (!name || /^(unknown artist|episode|podcast)$/i.test(name)) return [];
+      const res = await providers.default.search(`${name} songs`, {
+        filter: 'Songs',
+        signal,
+        limit: 20,
+      });
+      const out = res.tracks.filter((t) => t.id !== track.id && t.isVideo !== true);
+      if (__DEV__) console.log('[related] search backup', name, '| usable:', out.length);
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /**
