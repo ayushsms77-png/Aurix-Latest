@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  GestureResponderEvent,
   Image,
   LayoutAnimation,
   PanResponder,
@@ -15,22 +16,20 @@ import {
 import { X } from 'lucide-react-native';
 import { COLORS, FONTS, SIZES } from '../../constants/theme';
 import { Track } from '../../core/types';
+import {
+  ROW_HEIGHT,
+  LONG_PRESS_MS,
+  arrayMove,
+  dragTarget,
+  exceedsSlop,
+  orderChanged,
+} from './queueDrag';
 
 // Smooth row shifts while dragging (Android needs this flag enabled once).
 const anyUI = UIManager as any;
 if (Platform.OS === 'android' && typeof anyUI.setLayoutAnimationEnabledExperimental === 'function') {
   anyUI.setLayoutAnimationEnabledExperimental(true);
 }
-
-/** Fixed row height so drag math stays exact (48 art + 8 pad top/bottom). */
-const ROW_HEIGHT = 64;
-
-const arrayMove = <T,>(list: T[], from: number, to: number): T[] => {
-  const next = list.slice();
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
-};
 
 /** Animated equalizer bars for the now-playing row (Image 4 look). */
 const EqBars: React.FC = () => {
@@ -94,8 +93,19 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
   const [dragDy, setDragDy] = useState(0);
 
   const orderRef = useRef<Track[]>(upcoming);
+  const startIdsRef = useRef<string[]>([]);
   const draggingRef = useRef(false);
+  /** Row that has been held long enough to lift; only that row may start a drag. */
+  const armedRef = useRef<string | null>(null);
+  /** Set when a hold lifted a row, so the touch-up does not also count as a tap. */
+  const suppressTapRef = useRef(false);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartRef = useRef({ x: 0, y: 0 });
   const carryRef = useRef(0);
+  const onReorderRef = useRef(onReorder);
+  onReorderRef.current = onReorder;
+  const lengthRef = useRef(0);
+  lengthRef.current = order.length;
   const panCache = useRef<Map<string, ReturnType<typeof PanResponder.create>>>(new Map());
 
   // Keep local order in sync with the real queue (except mid-drag).
@@ -106,17 +116,73 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
     }
   }, [upcoming, visible]);
 
+  const clearHoldTimer = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
+
+  // Never leave a hold timer running if the sheet goes away.
+  useEffect(() => () => clearHoldTimer(), []);
+
+  /** Finger down on a row: start the "hold to lift" timer. */
+  const onRowTouchStart = (id: string) => (e: GestureResponderEvent) => {
+    suppressTapRef.current = false;
+    touchStartRef.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+    clearHoldTimer();
+    if (lengthRef.current < 2) return; // nothing to reorder
+    holdTimerRef.current = setTimeout(() => {
+      holdTimerRef.current = null;
+      armedRef.current = id;
+      suppressTapRef.current = true;
+      setDragId(id); // lifts the row and freezes list scrolling
+    }, LONG_PRESS_MS);
+  };
+
+  /** Moving before the hold completes means the user is scrolling. */
+  const onRowTouchMove = (e: GestureResponderEvent) => {
+    if (!holdTimerRef.current) return;
+    const dx = e.nativeEvent.pageX - touchStartRef.current.x;
+    const dy = e.nativeEvent.pageY - touchStartRef.current.y;
+    if (exceedsSlop(dx, dy)) clearHoldTimer();
+  };
+
+  /** Finger up/cancelled: drop an un-dragged hold. A live drag ends in its own release handler. */
+  const onRowTouchEnd = () => {
+    clearHoldTimer();
+    if (!draggingRef.current) {
+      armedRef.current = null;
+      setDragId(null);
+    }
+  };
+
   /** One PanResponder per track id, cached — handlers read refs so no stale state. */
   const getPan = (id: string) => {
     const cached = panCache.current.get(id);
     if (cached) return cached;
 
+    const finish = () => {
+      const changed = orderChanged(startIdsRef.current, orderRef.current.map((t) => t.id));
+      draggingRef.current = false;
+      armedRef.current = null;
+      carryRef.current = 0;
+      setDragId(null);
+      setDragDy(0);
+      if (changed) onReorderRef.current(orderRef.current.map((t) => t.id));
+    };
+
     const pan = PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      // Only a row that was held long enough may take over the touch, so
+      // ordinary taps and scrolling are left alone.
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: () => armedRef.current === id,
+      onMoveShouldSetPanResponderCapture: () => armedRef.current === id,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
         draggingRef.current = true;
         carryRef.current = 0;
+        startIdsRef.current = orderRef.current.map((t) => t.id);
         setDragId(id);
         setDragDy(0);
       },
@@ -125,7 +191,7 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
         const list = orderRef.current;
         const from = list.findIndex((t) => t.id === id);
         if (from < 0) return;
-        const target = Math.min(list.length - 1, Math.max(0, from + Math.round(effDy / ROW_HEIGHT)));
+        const target = dragTarget(list.length, from, effDy);
         if (target !== from) {
           LayoutAnimation.easeInEaseOut();
           const next = arrayMove(list, from, target);
@@ -137,19 +203,8 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
           setDragDy(effDy);
         }
       },
-      onPanResponderRelease: () => {
-        draggingRef.current = false;
-        setDragId(null);
-        setDragDy(0);
-        carryRef.current = 0;
-        onReorder(orderRef.current.map((t) => t.id));
-      },
-      onPanResponderTerminate: () => {
-        draggingRef.current = false;
-        setDragId(null);
-        setDragDy(0);
-        carryRef.current = 0;
-      },
+      onPanResponderRelease: finish,
+      onPanResponderTerminate: finish,
     });
     panCache.current.set(id, pan);
     return pan;
@@ -192,6 +247,10 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
 
           <View style={styles.divider} />
 
+          {order.length > 1 && (
+            <Text style={styles.hint}>Hold a song, then drag to reorder</Text>
+          )}
+
           {order.length === 0 ? (
             <Text style={styles.emptyText}>Nothing queued.</Text>
           ) : (
@@ -202,33 +261,53 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
                   key={track.id}
                   style={[
                     styles.row,
-                    isDragged && { transform: [{ translateY: dragDy }], zIndex: 20, elevation: 20 },
+                    isDragged && styles.rowLifted,
+                    isDragged && { transform: [{ translateY: dragDy }, { scale: 1.02 }], zIndex: 20, elevation: 20 },
                   ]}
                 >
-                  <TouchableOpacity
-                    style={styles.rowMain}
-                    activeOpacity={0.7}
-                    onPress={() => onJump(track.id)}
+                  {/* Hold anywhere on the song to lift it, then drag. The remove
+                      button sits outside this zone so it never starts a drag. */}
+                  <View
+                    style={styles.dragZone}
+                    {...getPan(track.id).panHandlers}
+                    onTouchStart={onRowTouchStart(track.id)}
+                    onTouchMove={onRowTouchMove}
+                    onTouchEnd={onRowTouchEnd}
+                    onTouchCancel={onRowTouchEnd}
                   >
-                    <Image
-                      source={{ uri: track.albumImageUrl }}
-                      style={styles.artwork}
-                      resizeMode="cover"
-                    />
-                    <View style={styles.rowTextWrap}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{track.title}</Text>
-                      <Text style={styles.rowArtist} numberOfLines={1}>{track.artist.name}</Text>
+                    <TouchableOpacity
+                      style={styles.rowMain}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        if (suppressTapRef.current) {
+                          suppressTapRef.current = false; // the hold, not a tap
+                          return;
+                        }
+                        onJump(track.id);
+                      }}
+                    >
+                      <Image
+                        source={{ uri: track.albumImageUrl }}
+                        style={styles.artwork}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.rowTextWrap}>
+                        <Text style={styles.rowTitle} numberOfLines={1}>{track.title}</Text>
+                        <Text style={styles.rowArtist} numberOfLines={1}>{track.artist.name}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => onRemove(track.id)}
+                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                    style={styles.removeBtn}
+                    activeOpacity={0.6}
+                  >
+                    <View style={styles.removeCircle}>
+                      <X color={COLORS.text.secondary} size={14} />
                     </View>
                   </TouchableOpacity>
-
-                  <TouchableOpacity onPress={() => onRemove(track.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.removeBtn}>
-                    <X color={COLORS.text.disabled} size={15} />
-                  </TouchableOpacity>
-
-                  {/* Invisible drag handle in the same spot the dots used to
-                      occupy -- reordering still works via long-press+drag
-                      here, just without the visible 6-dot graphic. */}
-                  <View style={styles.gripTouch} {...getPan(track.id).panHandlers} />
                 </View>
               );
             })
@@ -283,12 +362,25 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.hairline,
     marginVertical: SIZES.sm,
   },
+  // Side padding + equal negative margin: invisible normally, but lets the
+  // lifted row's background extend past the artwork edge.
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     height: ROW_HEIGHT,
+    paddingHorizontal: SIZES.sm,
+    marginHorizontal: -SIZES.sm,
   },
-  rowMain: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: SIZES.sm },
+  rowLifted: {
+    backgroundColor: '#2C2C2E',
+    borderRadius: SIZES.radius.sm,
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  dragZone: { flex: 1, minWidth: 0 },
+  rowMain: { flexDirection: 'row', alignItems: 'center', height: ROW_HEIGHT, paddingRight: SIZES.sm },
   rowTextWrap: { flex: 1, minWidth: 0 },
   rowTitle: { fontFamily: FONTS.medium, fontSize: 15, color: COLORS.text.primary },
   rowArtist: { fontFamily: FONTS.regular, fontSize: 13, color: COLORS.text.secondary, marginTop: 1 },
@@ -298,16 +390,29 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surfaceLight,
     marginRight: SIZES.md,
   },
-  removeBtn: { paddingHorizontal: SIZES.sm },
-  gripTouch: { padding: SIZES.sm, paddingLeft: 2 },
-  gripDots: {
-    width: 9, height: 15,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    alignContent: 'space-between',
+  // 44px touch target with a small round button inside, kept clear of the
+  // song text and the sheet edge so it is not hit by accident.
+  removeBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: SIZES.xs,
   },
-  gripDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: COLORS.text.muted },
+  removeCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hint: {
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: COLORS.text.muted,
+    marginBottom: SIZES.xs,
+  },
   emptyText: {
     fontFamily: FONTS.regular,
     fontSize: 14,
