@@ -29,6 +29,8 @@ const RECENT_KEY = 'note_recent_searches';
 const MAX_RECENT = 4;
 const TRENDING_QUERY = 'trending songs this week';
 const CHART_QUERY = 'top global hits 2024';
+/** Max songs shown for a search (top result + the rows under "Songs"); quality drops further down. */
+const MAX_SONGS_SHOWN = 7;
 
 async function loadRecent(): Promise<string[]> {
   try {
@@ -212,7 +214,8 @@ export default function SearchScreen() {
     [onOpenCollection]
   );
 
-  const [topResult, ...restTracks] = results.tracks;
+  const [topResult, ...allRestTracks] = results.tracks;
+  const restTracks = allRestTracks.slice(0, MAX_SONGS_SHOWN - 1);
   const showRecent = !isSearchingActive && recentSearches.length > 0;
   const showBrowse = !isSearchingActive;
 
@@ -358,23 +361,21 @@ export default function SearchScreen() {
                     <Text style={styles.clearAll}>Clear all</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={styles.recentCard}>
-                  {recentSearches.map((term, i) => (
-                    <View key={term} style={[styles.recentRowWrap, i < recentSearches.length - 1 && styles.recentDivider]}>
-                      <TouchableOpacity style={styles.recentRow} onPress={() => commitSearch(term)}>
-                        <Clock color={COLORS.iconInactive} size={17} />
-                        <Text style={styles.recentText} numberOfLines={1}>{term}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.recentRemove}
-                        onPress={() => removeOneRecent(term)}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      >
-                        <X color={COLORS.iconInactive} size={15} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
+                {recentSearches.map((term) => (
+                  <View key={term} style={styles.recentRowWrap}>
+                    <TouchableOpacity style={styles.recentRow} onPress={() => commitSearch(term)}>
+                      <Clock color={COLORS.accent.green} size={16} />
+                      <Text style={styles.recentText} numberOfLines={1}>{term}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.recentRemove}
+                      onPress={() => removeOneRecent(term)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <X color={COLORS.iconInactive} size={16} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
               </View>
             )}
 
@@ -467,7 +468,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SIZES.sm,
     backgroundColor: COLORS.surfaceLight,
-    borderRadius: SIZES.radius.search,
+    borderRadius: 10, // rectangular, not pill-like
     paddingHorizontal: SIZES.md,
     height: 50,
     marginBottom: SIZES.lg,
@@ -502,36 +503,30 @@ const styles = StyleSheet.create({
     color: COLORS.accent.green,
   },
   recentSection: { marginBottom: SIZES.md },
-  recentCard: {
-    backgroundColor: COLORS.surfaceLight,
-    borderRadius: SIZES.radius.lg,
-    overflow: 'hidden',
-  },
+  // Recent rows share Trending Searches' look: same left edge, red icon, same
+  // title style, no card or dividers.
   recentRowWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: SIZES.md,
-  },
-  recentDivider: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.hairline,
+    minHeight: 44,
   },
   recentRow: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.md,
-    paddingVertical: SIZES.smd,
-    paddingLeft: SIZES.md,
+    gap: SIZES.smd,
+    paddingVertical: SIZES.sm,
   },
   recentText: {
     flex: 1,
-    fontFamily: FONTS.medium,
+    fontFamily: FONTS.semibold,
     fontSize: 14,
     color: COLORS.text.primary,
   },
+  // Negative margin lines the X's visible edge up with "Clear all" above it.
   recentRemove: {
-    padding: SIZES.xs,
+    padding: SIZES.sm,
+    marginRight: -SIZES.sm,
   },
   categoriesGrid: {
     flexDirection: 'row',
