@@ -40,6 +40,9 @@ const PARAMS_FOR_FILTER: Record<SearchFilter, string | undefined> = {
   Playlists: SEARCH_PARAMS.playlists,
 };
 
+/** Candidates wanted from the related feed before filtering down to a few. */
+const RELATED_POOL_TARGET = 10;
+
 export class YouTubeResolver implements TrackResolver {
   readonly id = 'youtube' as const;
   readonly name = 'YouTube Music';
@@ -318,20 +321,41 @@ export class YouTubeResolver implements TrackResolver {
   }
 
   async getRelated(track: Track, signal?: AbortSignal): Promise<Track[]> {
-    try {
-      const response = await innertube.next(track.sourceId, undefined, signal);
-      const items = deepCollect(response, 'playlistPanelVideoRenderer');
+    // YouTube Music only returns a real queue when asked for the song's
+    // "radio" playlist (RDAMVM + id). A bare videoId usually gives back just
+    // the current song. Ask for the radio first, then the bare call, and pool
+    // what both return: a wide pool (10+) lets the caller's filters (no
+    // repeats, no podcasts, artist caps) still leave 4-5 good songs.
+    const attempts: (string | undefined)[] = [`RDAMVM${track.sourceId}`, undefined];
+    let pool: Track[] = [];
 
-      return dedupeBy(
-        items
+    for (const playlistId of attempts) {
+      try {
+        const response = await innertube.next(track.sourceId, playlistId, signal);
+        const items = deepCollect(response, 'playlistPanelVideoRenderer');
+        const tracks = items
           .map((i: any) => this.parsePanelItem(i))
-          .filter((t): t is Track => t !== null && t.sourceId !== track.sourceId),
-        (t) => t.id
-      );
-    } catch {
-      // Related tracks are a nicety -- never surface a failure for them.
-      return [];
+          .filter((t): t is Track => t !== null && t.sourceId !== track.sourceId);
+        pool = dedupeBy([...pool, ...tracks], (t) => t.id);
+        if (__DEV__) {
+          console.log(
+            '[related]',
+            playlistId ? 'radio' : 'plain',
+            track.title,
+            '| panel items:',
+            items.length,
+            '| pool:',
+            pool.length
+          );
+        }
+        if (pool.length >= RELATED_POOL_TARGET) break;
+      } catch (e) {
+        if (__DEV__) console.log('[related] failed', playlistId ? 'radio' : 'plain', String(e));
+        if (signal?.aborted) return [];
+      }
     }
+    // Related tracks are a nicety -- never surface a failure for them.
+    return pool;
   }
 
   async getSuggestions(input: string, signal?: AbortSignal): Promise<string[]> {
