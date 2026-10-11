@@ -21,6 +21,8 @@ import { LibraryService } from '../services/LibraryService';
 import { MusicService } from '../services/MusicService';
 import { DownloadService } from '../services/DownloadService';
 import { TasteService } from '../services/TasteService';
+import { artistKey } from '../recommendation/identity';
+import { pickFresh, songKey } from '../recommendation/mix';
 // TEMP (crash bisection test): react-native-playback-controls suspected of a
 // native crash. Commented out, not deleted -- re-enable by uncommenting this
 // import and the block below once confirmed.
@@ -83,6 +85,25 @@ type PlayerContextType = {
 const HISTORY_MIN_SECONDS = 20;
 const HISTORY_MIN_RATIO = 0.25;
 
+/**
+ * Continuous playback: when this many tracks (or fewer) are left to play, a
+ * few related tracks are fetched and added, so the queue never runs dry.
+ */
+const REFILL_AT = 3;
+/** How many related tracks one refill adds. */
+const REFILL_BATCH = 5;
+/** Per-artist cap inside one refill, so a single artist cannot take over. */
+const REFILL_MAX_PER_ARTIST = 2;
+/** After a refill that found nothing, wait before trying again. */
+const REFILL_RETRY_MS = 60_000;
+/** Minimum gap between refills, so a trickle of results cannot loop fast. */
+const REFILL_GAP_MS = 3_000;
+/**
+ * Tracks the app queued itself (not picked by the user) count for this much
+ * of a normal listen/complete in taste scoring. Skips always count in full.
+ */
+const AUTOPLAY_TASTE_WEIGHT = 0.5;
+
 /** How many unplayable tracks in a row we step over before giving up. */
 const MAX_AUTO_SKIPS = 3;
 
@@ -133,6 +154,17 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   /** Identifies the newest "sync the native next slot" request so stale async work bails. */
   const nextSlotToken = useRef(0);
+
+  /** Bumped whenever a brand-new queue replaces the old one, so a slow refill for the old queue is dropped. */
+  const queueEpoch = useRef(0);
+  const refillInFlight = useRef(false);
+  const refillBlockedUntil = useRef(0);
+  /** Set when the user clears the queue: no refill for that track, they asked for it empty. */
+  const refillSkipTrackId = useRef<string | null>(null);
+  /** Ids the app added on its own (refill / end-of-queue related). */
+  const autoAddedIds = useRef(new Set<string>());
+  const tasteWeightOf = (track: Track) =>
+    autoAddedIds.current.has(track.id) ? AUTOPLAY_TASTE_WEIGHT : 1;
 
   const bumpQueue = useCallback(() => setQueueVersion((v) => v + 1), []);
 
@@ -312,7 +344,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       // Capture before advancing -- queueRef.current.current is about to
       // point at whatever plays next.
       const finishedTrack = queueRef.current.current;
-      if (finishedTrack) TasteService.recordComplete(finishedTrack);
+      if (finishedTrack) TasteService.recordComplete(finishedTrack, tasteWeightOf(finishedTrack));
 
       // `auto` so repeat-one replays rather than advances.
       const nextTrack = queueRef.current.next(true);
@@ -360,7 +392,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       // distinction next()/previous() already use elsewhere.
       if (expected) {
         if (historyWrittenFor.current === expected.id) {
-          TasteService.recordComplete(expected);
+          TasteService.recordComplete(expected, tasteWeightOf(expected));
         } else {
           TasteService.recordSkip(expected);
         }
@@ -391,17 +423,29 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Safety net for the very end of the queue: if nothing is left to play and
+   * the refill below has not caught up, fetch related tracks and continue.
+   */
   const extendWithRelated = useCallback(async () => {
     const settings = LibraryService.getSettings();
     const last = queueRef.current.current;
     if (!settings.autoplayRelated || !last) return;
+    const epoch = queueEpoch.current;
     try {
       const related = await MusicService.getRelated(last);
-      const fresh = related.filter(
-        (t) => !queueRef.current.items.some((q) => q.id === t.id)
-      );
+      if (epoch !== queueEpoch.current) return; // a new queue started meanwhile
+      const items = queueRef.current.items;
+      const fresh = pickFresh(related, {
+        existingIds: new Set(items.map((t) => t.id)),
+        existingSongKeys: new Set(items.map(songKey)),
+        tailArtistKey: artistKey(last.artist),
+        limit: 20,
+        maxPerArtist: REFILL_MAX_PER_ARTIST * 3,
+      });
       if (!fresh.length) return;
-      queueRef.current.add(fresh.slice(0, 20));
+      queueRef.current.add(fresh);
+      fresh.forEach((t) => autoAddedIds.current.add(t.id));
       const nextTrack = queueRef.current.next(false);
       bumpQueue();
       persistQueue();
@@ -411,6 +455,73 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Continuous playback. When REFILL_AT or fewer tracks are left, fetch the
+   * related tracks of the queue's last track and append a few good ones (no
+   * repeats, no non-music, capped per artist). Runs well before the last song
+   * ends, so playback never has to stop and wait.
+   *
+   * Only for a plain queue (repeat off); repeat modes loop what is there. One
+   * request at a time, rate limited, and dropped if a new queue replaced this
+   * one while it was in flight.
+   */
+  const refillQueue = useCallback(async () => {
+    if (refillInFlight.current) return;
+    if (Date.now() < refillBlockedUntil.current) return;
+    if (!LibraryService.getSettings().autoplayRelated) return;
+
+    const q = queueRef.current;
+    const current = q.current;
+    if (!current || q.repeat !== 'off') return;
+    if (refillSkipTrackId.current === current.id) return;
+    refillSkipTrackId.current = null;
+
+    const upcoming = q.upcoming;
+    if (upcoming.length > REFILL_AT) return;
+
+    const tail = upcoming[upcoming.length - 1] ?? current;
+    const epoch = queueEpoch.current;
+    refillInFlight.current = true;
+    try {
+      const related = await MusicService.getRelated(tail);
+      if (epoch !== queueEpoch.current) return; // a different queue started meanwhile
+
+      const items = queueRef.current.items;
+      const fresh = pickFresh(related, {
+        existingIds: new Set(items.map((t) => t.id)),
+        existingSongKeys: new Set(items.map(songKey)),
+        tailArtistKey: artistKey(tail.artist),
+        limit: REFILL_BATCH,
+        maxPerArtist: REFILL_MAX_PER_ARTIST,
+      });
+      if (!fresh.length) {
+        refillBlockedUntil.current = Date.now() + REFILL_RETRY_MS;
+        return;
+      }
+
+      queueRef.current.add(fresh);
+      fresh.forEach((t) => autoAddedIds.current.add(t.id));
+      refillBlockedUntil.current = Date.now() + REFILL_GAP_MS;
+      bumpQueue();
+      persistQueue();
+      syncNextSlot();
+    } catch {
+      refillBlockedUntil.current = Date.now() + REFILL_RETRY_MS;
+    } finally {
+      refillInFlight.current = false;
+    }
+  }, [bumpQueue, persistQueue, syncNextSlot]);
+
+  // Check whether the queue needs topping up whenever it changes or playback
+  // starts. The short delay keeps rapid skipping from firing a request per tap.
+  useEffect(() => {
+    if (!status.isPlaying) return;
+    const t = setTimeout(() => {
+      void refillQueue();
+    }, 600);
+    return () => clearTimeout(t);
+  }, [queueVersion, currentTrack?.id, status.isPlaying, refillQueue]);
 
   // ---- startup: restore library, settings, queue and position -----------
 
@@ -497,7 +608,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     if (positionSecond >= threshold && positionSecond > 0) {
       historyWrittenFor.current = currentTrack.id;
       LibraryService.recordListen(currentTrack);
-      TasteService.recordListen(currentTrack);
+      TasteService.recordListen(currentTrack, tasteWeightOf(currentTrack));
       if (__DEV__) console.log('[history] logged', currentTrack.title);
     }
   }, [currentTrack, positionSecond, status.duration]);
@@ -529,6 +640,12 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         0,
         list.findIndex((t) => t.id === track.id)
       );
+      // A brand-new queue: drop any refill still running for the old one and
+      // forget which tracks the app had added there.
+      queueEpoch.current += 1;
+      autoAddedIds.current.clear();
+      refillSkipTrackId.current = null;
+      refillBlockedUntil.current = 0;
       queueRef.current.setTracks(list, startIndex, context?.label ?? '');
       bumpQueue();
       persistQueue();
@@ -543,6 +660,8 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     // Restored-but-never-loaded track: the first press starts it.
     if (playbackEngine.trackId !== track.id) {
       if (!queueRef.current.current) {
+        queueEpoch.current += 1;
+        autoAddedIds.current.clear();
         queueRef.current.setTracks([track], 0, '');
         bumpQueue();
       }
@@ -694,6 +813,9 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   );
 
   const clearQueue = useCallback(() => {
+    // They asked for an empty queue: do not refill it behind their back for
+    // this track (the end-of-queue autoplay still applies when it finishes).
+    refillSkipTrackId.current = queueRef.current.current?.id ?? null;
     queueRef.current.clearUpcoming();
     bumpQueue();
     persistQueue();
@@ -704,6 +826,8 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     (trackId: string) => {
       const track = queueRef.current.jumpTo(trackId);
       if (!track) return;
+      // Picking it from the queue is a choice, so it counts like one.
+      autoAddedIds.current.delete(trackId);
       bumpQueue();
       persistQueue();
       void loadCurrent({ autoPlay: true });
