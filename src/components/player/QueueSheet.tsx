@@ -225,7 +225,8 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
         </View>
 
         <ScrollView
-          contentContainerStyle={{ paddingBottom: SIZES.lg }}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           scrollEnabled={dragId === null}
           showsVerticalScrollIndicator={false}
         >
@@ -262,7 +263,7 @@ export const QueueSheet: React.FC<QueueSheetProps> = ({
                   style={[
                     styles.row,
                     isDragged && styles.rowLifted,
-                    isDragged && { transform: [{ translateY: dragDy }, { scale: 1.02 }], zIndex: 20, elevation: 20 },
+                    isDragged && { transform: [{ translateY: dragDy }], zIndex: 20, elevation: 20 },
                   ]}
                 >
                   {/* Hold anywhere on the song to lift it, then drag. The remove
@@ -362,6 +363,11 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.hairline,
     marginVertical: SIZES.sm,
   },
+  // The list is 8px wider than the sheet's content on each side, with 8px of
+  // padding put back inside it: nothing moves, but a lifted row's background
+  // can extend past the artwork without being clipped at the list's edge.
+  scroll: { marginHorizontal: -SIZES.sm },
+  scrollContent: { paddingHorizontal: SIZES.sm, paddingBottom: SIZES.lg },
   // Side padding + equal negative margin: invisible normally, but lets the
   // lifted row's background extend past the artwork edge.
   row: {
