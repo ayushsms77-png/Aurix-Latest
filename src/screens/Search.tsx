@@ -117,13 +117,17 @@ export default function SearchScreen() {
     });
   }, []);
 
-  /** Playing a search result queues the whole result list behind it. */
+  /**
+   * Playing a search result plays just that song; usePlayer then keeps the
+   * queue filled with tracks related to it (continuous playback), instead of
+   * queueing the rest of the search results.
+   */
   const onPlayTrack = useCallback(
     (track: Track) => {
       Keyboard.dismiss();
-      playTrack(track, { tracks: results.tracks, label: `Search • ${results.query}` });
+      playTrack(track, { tracks: [track], label: `Search • ${results.query}` });
     },
-    [playTrack, results.tracks, results.query]
+    [playTrack, results.query]
   );
 
   const playFrom = useCallback(

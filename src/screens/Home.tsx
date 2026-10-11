@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -24,6 +24,7 @@ import { useNavigation } from '@react-navigation/native';
 import { TrackRow } from '../components/lists/TrackRow';
 import { AddToPlaylistSheet } from '../components/lists/AddToPlaylistSheet';
 import { squareArtOnly } from '../utils/rankResults';
+import { interleaveBySeed, pickSeeds } from '../recommendation/mix';
 
 type SectionDef = {
   key: string;
@@ -44,7 +45,7 @@ const SECTIONS: SectionDef[] = [
   { key: 'recentlyPlayed', title: 'Recently Played', kind: 'history', layout: 'h', cardSize: 168, radius: SIZES.radius.lg },
   { key: 'quickPicks', title: 'Quick Picks', kind: 'search', layout: 'grid', query: 'top hits playlist', limit: 6 },
   { key: 'trending', title: 'Trending Now', kind: 'search', layout: 'h', query: 'top global chart songs', cardSize: 128, radius: SIZES.radius.md },
-  { key: 'loveSongs', title: 'Love', kind: 'search', layout: 'h', query: 'indian trending love songs ', cardSize: 128, radius: SIZES.radius.md },
+  { key: 'loveSongs', title: 'Love', kind: 'search', layout: 'h', query: 'indian trending love songs', cardSize: 128, radius: SIZES.radius.md },
   { key: 'partyHits', title: 'Party Hits', kind: 'search', layout: 'h', query: 'best party songs hindi punjabi', cardSize: 128, radius: SIZES.radius.md },
   { key: 'oldGold', title: 'Old Gold', kind: 'search', layout: 'h', query: 'old bollywood classic hits', cardSize: 128, radius: SIZES.radius.md },
   { key: 'popularAlbums', title: 'Popular Albums', kind: 'albums', layout: 'h', query: 'popular bollywood albums', filter: 'Albums', limit: 7, cardSize: 150, radius: SIZES.radius.lg },
@@ -189,23 +190,58 @@ export default function HomeScreen() {
   }, []);
 
   /**
-   * "Based on Your Listening" -- prefers the artist with the highest learned
-   * affinity (TasteService: built from real listens/completions/skips, not
-   * just whichever track happened to play last). Falls back to last-played,
-   * then a generic mood, for a brand-new listener with no signal yet.
+   * "Based on Your Listening" -- a mix, not one artist. The seeds are the
+   * latest tracks you listened to (one per artist, up to 3); each seed's
+   * related tracks are mixed round-robin, minus what you just played, with at
+   * most 2 per artist. Related lists are cached in MusicService, so reopening
+   * Home does not refetch them.
+   *
+   * A brand-new listener has no history to seed from, and an empty mix falls
+   * back to the old behaviour: a search for the top-affinity artist (taste),
+   * then the last-played artist, then a generic mood.
    */
+  const seeds = useMemo(() => pickSeeds(recentlyPlayed, 3), [recentlyPlayed]);
+  const seedsRef = useRef(seeds);
+  seedsRef.current = seeds;
+  const recentIdsRef = useRef<Set<string>>(new Set());
+  recentIdsRef.current = new Set(recentlyPlayed.slice(0, 30).map((t) => t.id));
+  // Only a different set of seeds should trigger a refetch, not a new array.
+  const seedKey = seeds.map((t) => t.id).join('|');
+
   const topTasteArtist = TasteService.getTopArtists(1)[0]?.artistName;
-  const relatedQuery = topTasteArtist
+  const fallbackQuery = topTasteArtist
     ? `${topTasteArtist} songs`
     : recentlyPlayed[0]?.artist.name
       ? `${recentlyPlayed[0].artist.name} songs`
       : 'chill mood playlist';
+  // With no seeds the fallback query decides the row, so it must retrigger the fetch.
+  const fallbackDep = seeds.length ? '' : fallbackQuery;
+  const fallbackQueryRef = useRef(fallbackQuery);
+  fallbackQueryRef.current = fallbackQuery;
 
-  const fetchRelated = useCallback(() => {
-    return MusicService.search(relatedQuery, { limit: HOME_SEARCH_FETCH_LIMIT })
-      .then((r) => setSectionData((m) => ({ ...m, basedOn: squareArtOnly(r.tracks) })))
-      .catch(() => undefined);
-  }, [relatedQuery]);
+  const fetchRelated = useCallback(async () => {
+    try {
+      const current = seedsRef.current;
+      if (current.length) {
+        const lists = await Promise.all(
+          current.map((seed) => MusicService.getRelated(seed).catch(() => [] as Track[]))
+        );
+        const exclude = new Set(recentIdsRef.current);
+        current.forEach((t) => exclude.add(t.id));
+        const mixed = squareArtOnly(
+          interleaveBySeed(lists, { excludeIds: exclude, maxPerArtist: 2, limit: 14 })
+        ).slice(0, 12);
+        if (mixed.length >= 4) {
+          setSectionData((m) => ({ ...m, basedOn: mixed }));
+          return;
+        }
+      }
+      const r = await MusicService.search(fallbackQueryRef.current, { limit: HOME_SEARCH_FETCH_LIMIT });
+      setSectionData((m) => ({ ...m, basedOn: squareArtOnly(r.tracks) }));
+    } catch {
+      // Keep whatever the row already shows.
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,7 +257,9 @@ export default function HomeScreen() {
 
   useEffect(() => {
     void fetchRelated();
-  }, [fetchRelated]);
+    // seedKey: refetch only when the seeds change; with no seeds the fallback
+    // query decides what is shown.
+  }, [fetchRelated, seedKey, fallbackDep]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -384,7 +422,7 @@ const styles = StyleSheet.create({
   section: { marginTop: SIZES.xl },
   // First section sits right under the "Home" title -- the normal section
   // gap plus the header's own padding left a big dead band there.
-  firstSection: { marginTop: SIZES.md },
+  firstSection: { marginTop: SIZES.md + 2 },
   sectionTitle: {
     fontFamily: FONTS.bold,
     fontSize: 20,
