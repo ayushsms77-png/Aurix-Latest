@@ -44,7 +44,7 @@ const SECTIONS: SectionDef[] = [
   { key: 'recentlyPlayed', title: 'Recently Played', kind: 'history', layout: 'h', cardSize: 168, radius: SIZES.radius.lg },
   { key: 'quickPicks', title: 'Quick Picks', kind: 'search', layout: 'grid', query: 'top hits playlist', limit: 6 },
   { key: 'trending', title: 'Trending Now', kind: 'search', layout: 'h', query: 'top global chart songs', cardSize: 128, radius: SIZES.radius.md },
-  { key: 'loveSongs', title: 'Love', kind: 'search', layout: 'h', query: 'indian love songs hindi tum hi ho', cardSize: 128, radius: SIZES.radius.md },
+  { key: 'loveSongs', title: 'Love', kind: 'search', layout: 'h', query: 'indian trending love songs ', cardSize: 128, radius: SIZES.radius.md },
   { key: 'partyHits', title: 'Party Hits', kind: 'search', layout: 'h', query: 'best party songs hindi punjabi', cardSize: 128, radius: SIZES.radius.md },
   { key: 'oldGold', title: 'Old Gold', kind: 'search', layout: 'h', query: 'old bollywood classic hits', cardSize: 128, radius: SIZES.radius.md },
   { key: 'popularAlbums', title: 'Popular Albums', kind: 'albums', layout: 'h', query: 'popular bollywood albums', filter: 'Albums', limit: 7, cardSize: 150, radius: SIZES.radius.lg },
