@@ -19,7 +19,13 @@ providers.register(youtubeResolver, true);
  * Screens call MusicService; MusicService picks the provider. No screen ever
  * imports a provider, an InnerTube helper, or a stream resolver.
  */
+const RELATED_TTL_MS = 30 * 60 * 1000;
+const RELATED_CACHE_MAX = 60;
+
 class MusicServiceImpl {
+  private relatedCache = new Map<string, { at: number; tracks: Track[] }>();
+  private relatedInFlight = new Map<string, Promise<Track[]>>();
+
   /** Warm the on-disk metadata cache. Called once at startup. */
   async init(): Promise<void> {
     await metadataCache.hydrate();
@@ -95,10 +101,42 @@ class MusicServiceImpl {
     return provider.getArtistTracks(browseId, signal);
   }
 
+  /**
+   * Related ("radio") tracks for a track. Cached in memory only -- these lists
+   * are large and cheap to refetch, so they are kept out of the on-disk
+   * metadata cache. Concurrent callers share one request, and empty results
+   * (usually a failed fetch) are never cached.
+   */
   async getRelated(track: Track, signal?: AbortSignal): Promise<Track[]> {
     const provider = providers.forTrack(track);
     if (!provider.getRelated) return [];
-    return provider.getRelated(track, signal);
+
+    const key = track.id;
+    const hit = this.relatedCache.get(key);
+    if (hit && Date.now() - hit.at < RELATED_TTL_MS) return hit.tracks;
+
+    const pending = this.relatedInFlight.get(key);
+    if (pending) return pending;
+
+    const request = provider
+      .getRelated(track, signal)
+      .then((tracks) => {
+        if (tracks.length) {
+          this.relatedCache.set(key, { at: Date.now(), tracks });
+          // Oldest entries out first (Map keeps insertion order).
+          while (this.relatedCache.size > RELATED_CACHE_MAX) {
+            const oldest = this.relatedCache.keys().next().value;
+            if (oldest === undefined) break;
+            this.relatedCache.delete(oldest);
+          }
+        }
+        return tracks;
+      })
+      .finally(() => {
+        this.relatedInFlight.delete(key);
+      });
+    this.relatedInFlight.set(key, request);
+    return request;
   }
 
   /**
