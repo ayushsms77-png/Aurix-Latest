@@ -159,6 +159,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const queueEpoch = useRef(0);
   const refillInFlight = useRef(false);
   const refillBlockedUntil = useRef(0);
+  const extendRef = useRef<(() => Promise<boolean>) | null>(null);
   /** Set when the user clears the queue: no refill for that track, they asked for it empty. */
   const refillSkipTrackId = useRef<string | null>(null);
   /** Ids the app added on its own (refill / end-of-queue related). */
@@ -329,6 +330,20 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           return;
         }
 
+        // Nothing after the broken track: fetch more music and move on to
+        // that instead of stopping dead on an error.
+        if (skippable && autoSkips.current < MAX_AUTO_SKIPS && !queueRef.current.hasNext) {
+          autoSkips.current += 1;
+          const message = messageFor(err);
+          void (extendRef.current?.() ?? Promise.resolve(false)).then((ok) => {
+            if (ok) return;
+            if (id !== loadId.current) return;
+            autoSkips.current = 0;
+            setError(message);
+          });
+          return;
+        }
+
         autoSkips.current = 0;
         setError(messageFor(err));
       }
@@ -427,14 +442,14 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
    * Safety net for the very end of the queue: if nothing is left to play and
    * the refill below has not caught up, fetch related tracks and continue.
    */
-  const extendWithRelated = useCallback(async () => {
+  const extendWithRelated = useCallback(async (): Promise<boolean> => {
     const settings = LibraryService.getSettings();
     const last = queueRef.current.current;
-    if (!settings.autoplayRelated || !last) return;
+    if (!settings.autoplayRelated || !last) return false;
     const epoch = queueEpoch.current;
     try {
       const related = await MusicService.getRelated(last);
-      if (epoch !== queueEpoch.current) return; // a new queue started meanwhile
+      if (epoch !== queueEpoch.current) return false; // a new queue started meanwhile
       const items = queueRef.current.items;
       const fresh = pickFresh(related, {
         existingIds: new Set(items.map((t) => t.id)),
@@ -443,18 +458,21 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         limit: 20,
         maxPerArtist: REFILL_MAX_PER_ARTIST * 3,
       });
-      if (!fresh.length) return;
+      if (!fresh.length) return false;
       queueRef.current.add(fresh);
       fresh.forEach((t) => autoAddedIds.current.add(t.id));
       const nextTrack = queueRef.current.next(false);
       bumpQueue();
       persistQueue();
       if (nextTrack) void loadCurrent({ autoPlay: true });
+      return !!nextTrack;
     } catch {
       // Autoplay is a convenience; silence is the right failure mode.
+      return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  extendRef.current = extendWithRelated;
 
   /**
    * Continuous playback. When REFILL_AT or fewer tracks are left, fetch the
@@ -495,6 +513,9 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         limit: REFILL_BATCH,
         maxPerArtist: REFILL_MAX_PER_ARTIST,
       });
+      if (__DEV__) {
+        console.log('[refill]', tail.title, '| related:', related.length, '| fresh:', fresh.length);
+      }
       if (!fresh.length) {
         refillBlockedUntil.current = Date.now() + REFILL_RETRY_MS;
         return;
@@ -516,12 +537,14 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // Check whether the queue needs topping up whenever it changes or playback
   // starts. The short delay keeps rapid skipping from firing a request per tap.
   useEffect(() => {
-    if (!status.isPlaying) return;
+    // While a track is loading it is not "playing" yet, but the queue should
+    // already be topped up.
+    if (!status.isPlaying && !isLoading) return;
     const t = setTimeout(() => {
       void refillQueue();
     }, 600);
     return () => clearTimeout(t);
-  }, [queueVersion, currentTrack?.id, status.isPlaying, refillQueue]);
+  }, [queueVersion, currentTrack?.id, status.isPlaying, isLoading, refillQueue]);
 
   // ---- startup: restore library, settings, queue and position -----------
 
