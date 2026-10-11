@@ -117,6 +117,10 @@ export function parseTrackItem(item: Any): Track | null {
     duration = parseDuration(fixedColumnText(item));
   }
 
+  // Podcast episodes are not music: without this the label "Episode" was
+  // shown as the artist name (and learned as a favourite artist).
+  if (texts.length > 0 && /^(Episode|Podcast)$/i.test(texts[0])) return null;
+
   // Drop a leading type label ("Song", "Video") that search sometimes prepends.
   if (texts.length > 1 && /^(Song|Video)$/i.test(texts[0])) {
     texts.shift();
@@ -156,6 +160,8 @@ export function parseTrackItem(item: Any): Track | null {
       ?.watchEndpointMusicConfig?.musicVideoType ??
     flexColumn(item, 0)?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint
       ?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+
+  if (videoType === 'MUSIC_VIDEO_TYPE_PODCAST_EPISODE') return null;
 
   const explicit = (item?.badges ?? []).some(
     (b: Any) => b?.musicInlineBadgeRenderer?.icon?.iconType === 'MUSIC_EXPLICIT_BADGE'

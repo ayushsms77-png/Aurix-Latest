@@ -204,6 +204,15 @@ export class YouTubeResolver implements TrackResolver {
 
     if (!title) return null;
 
+    // Same field the search parser reads. Podcast episodes are not music;
+    // anything that is not an official audio track is flagged as a video so
+    // square-art-only shelves can skip it. Unknown stays unknown.
+    const videoType: string | undefined =
+      match?.navigationEndpoint?.watchEndpoint?.watchEndpointMusicSupportedConfigs
+        ?.watchEndpointMusicConfig?.musicVideoType;
+    if (videoType === 'MUSIC_VIDEO_TYPE_PODCAST_EPISODE') return null;
+    if (/^(Episode|Podcast)$/i.test(artistName)) return null;
+
     return {
       id: trackKey('youtube', sourceId),
       title,
@@ -212,6 +221,7 @@ export class YouTubeResolver implements TrackResolver {
       duration: parseTimeText(lengthText),
       provider: 'youtube',
       sourceId,
+      isVideo: videoType ? videoType !== 'MUSIC_VIDEO_TYPE_ATV' : undefined,
     };
   }
 
