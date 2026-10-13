@@ -1,7 +1,0 @@
-# Both functions do their own auth (register-device is public by design and only
-# stores tokens; push-admin needs the admin/cron key), so gateway JWT check is off.
-[functions.register-device]
-verify_jwt = false
-
-[functions.push-admin]
-verify_jwt = false
