@@ -21,7 +21,8 @@ import { createPushRegistrar, type PushDeps } from './pushRegistrar';
 const CHANNEL_ID = 'daily';
 
 type Extra = {
-  supabaseFunctionsUrl?: string;
+  supabaseUrl?: string;
+  supabasePublishableKey?: string;
   pushRegistrationEnabled?: boolean;
   eas?: { projectId?: string };
 };
@@ -65,7 +66,8 @@ export async function initNotifications(): Promise<void> {
     const deps: PushDeps = {
       enabled: true,
       platform: Platform.OS,
-      functionsUrl: extra().supabaseFunctionsUrl,
+      supabaseUrl: extra().supabaseUrl,
+      supabaseKey: extra().supabasePublishableKey,
       projectId: extra().eas?.projectId,
       appVersion: Constants.expoConfig?.version ?? null,
       notifications: Notifications as unknown as PushDeps['notifications'],

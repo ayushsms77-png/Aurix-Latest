@@ -9,7 +9,7 @@
  * "onDevicePushToken" event after EVERY call (even when the token did not
  * change), and getExpoPushTokenAsync() calls it. So the listener re-triggered
  * itself forever, and force=true skipped the 24h cache: one POST to
- * register-device (plus one to exp.host) per loop turn, per device.
+ * the register call (plus one to exp.host) per loop turn, per device.
  *
  * Defences here are layered so that no single bug can recreate the loop:
  *  1. Kill switch (config flag). Off => nothing is touched at all.
@@ -42,7 +42,10 @@ export interface PushDeps {
   /** Master switch. false => init() does nothing at all. */
   enabled: boolean;
   platform: string;
-  functionsUrl?: string;
+  /** Supabase project URL, e.g. https://xxxx.supabase.co */
+  supabaseUrl?: string;
+  /** Publishable key (safe in the app; RLS + register_device() protect the DB). */
+  supabaseKey?: string;
   projectId?: string;
   appVersion?: string | null;
   notifications: {
@@ -59,7 +62,7 @@ export interface PushDeps {
     getItem(k: string): Promise<string | null>;
     setItem(k: string, v: string): Promise<void>;
   };
-  fetch: (url: string, init: any) => Promise<{ ok: boolean; status: number; headers?: { get(n: string): string | null } }>;
+  fetch: (url: string, init: any) => Promise<{ ok: boolean; status: number; headers?: { get(n: string): string | null }; json?: () => Promise<any> }>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   random: () => number;
@@ -130,22 +133,39 @@ export function createPushRegistrar(deps: PushDeps) {
     return !!perm.granted;
   }
 
-  async function post(token: string): Promise<{ ok: boolean; status: number; retryAfterMs?: number }> {
-    if (!deps.functionsUrl) return { ok: false, status: 0 };
+  /**
+   * Calls the DB function public.register_device through PostgREST.
+   * Mapping: HTTP 200 + ok:true => success; HTTP 200 + ok:false => backoff using
+   * retry_after (reason "disabled" => permanent 24h stop); other 4xx => permanent
+   * stop; 5xx/429/408/network => backoff.
+   */
+  async function post(token: string): Promise<{ ok: boolean; status: number; retryAfterMs?: number; stop?: boolean }> {
+    if (!deps.supabaseUrl || !deps.supabaseKey) return { ok: false, status: 0 };
     try {
-      const res = await deps.fetch(`${deps.functionsUrl}/register-device`, {
+      const res = await deps.fetch(`${deps.supabaseUrl}/rest/v1/rpc/register_device`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', apikey: deps.supabaseKey },
         body: JSON.stringify({
-          expo_push_token: token,
-          platform: deps.platform,
-          app_version: deps.appVersion ?? null,
+          p_token: token,
+          p_platform: deps.platform,
+          p_app_version: deps.appVersion ?? null,
         }),
       });
       let retryAfterMs: number | undefined;
       const ra = res.headers?.get('retry-after');
       if (ra && Number.isFinite(Number(ra))) retryAfterMs = Math.max(0, Number(ra)) * 1000;
-      return { ok: res.ok, status: res.status, retryAfterMs };
+      if (res.ok) {
+        let body: any = null;
+        try { body = res.json ? await res.json() : null; } catch { body = null; }
+        if (body && body.ok === true) return { ok: true, status: res.status };
+        if (body && body.ok === false) {
+          if (body.reason === 'disabled') return { ok: false, status: 200, stop: true };
+          const s = Number(body.retry_after);
+          return { ok: false, status: 429, retryAfterMs: Number.isFinite(s) ? Math.max(0, s) * 1000 : retryAfterMs };
+        }
+        return { ok: false, status: 500 }; // unexpected 200 body: treat as transient
+      }
+      return { ok: false, status: res.status, retryAfterMs };
     } catch {
       return { ok: false, status: 0 }; // network error
     }
@@ -212,7 +232,7 @@ export function createPushRegistrar(deps: PushDeps) {
       state.at = deps.now();
       state.failures = 0;
       state.notBefore = undefined;
-    } else if (r.status === 410 || (r.status >= 400 && r.status < 500 && r.status !== 429 && r.status !== 408)) {
+    } else if (r.stop || r.status === 410 || (r.status >= 400 && r.status < 500 && r.status !== 429 && r.status !== 408)) {
       // Endpoint disabled / rejects us: do not retry, in this process or for 24h.
       stoppedForProcess = true;
       state.notBefore = deps.now() + PERMANENT_STOP_MS;
