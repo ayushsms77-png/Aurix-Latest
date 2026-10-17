@@ -17,7 +17,7 @@ import { AnimatedSplash } from './src/components/AnimatedSplash';
 import { initNotifications } from './src/services/NotificationService';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { PlayerProvider } from './src/hooks/usePlayer';
-import { LibraryProvider } from './src/hooks/useLibrary';
+import { LibraryProvider, useLibrary } from './src/hooks/useLibrary';
 import { COLORS } from './src/constants/theme';
 import { getPlatformInfo, isNoteNativeAvailable } from './modules/note-native';
 
@@ -25,8 +25,32 @@ import { getPlatformInfo, isNoteNativeAvailable } from './modules/note-native';
 // frame (it calls hideAsync via onLogoDrawn), so the hand-off has no flash.
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
+// Tells the splash that the app underneath has loaded its data and had a moment
+// to mount, so fading the splash out will reveal a finished screen.
+const ReadySignal: React.FC<{ onReady: () => void }> = ({ onReady }) => {
+  const { isLoaded } = useLibrary();
+  useEffect(() => {
+    if (!isLoaded) return;
+    let raf = 0;
+    const t = setTimeout(() => {
+      raf = requestAnimationFrame(onReady);
+    }, 150);
+    return () => {
+      clearTimeout(t);
+      cancelAnimationFrame(raf);
+    };
+  }, [isLoaded, onReady]);
+  return null;
+};
+
 export default function App() {
   const [splashDone, setSplashDone] = useState(false);
+  // The heavy app is mounted only AFTER the splash animation has finished, so
+  // nothing competes with it (mounting it in parallel made the animation skip).
+  const [introDone, setIntroDone] = useState(false);
+  const [appReady, setAppReady] = useState(false);
+  const onIntroDone = useCallback(() => setIntroDone(true), []);
+  const markAppReady = useCallback(() => setAppReady(true), []);
   const hideNativeSplash = useCallback(() => {
     SplashScreen.hideAsync().catch(() => undefined);
   }, []);
@@ -64,11 +88,19 @@ export default function App() {
     Outfit_900Black,
   });
 
+  // Safety net: never leave the splash up forever if the ready signal is lost.
+  useEffect(() => {
+    if (!introDone || !fontsLoaded) return;
+    const t = setTimeout(() => setAppReady(true), 3500);
+    return () => clearTimeout(t);
+  }, [introDone, fontsLoaded]);
+
   return (
     <SafeAreaProvider>
       <View style={styles.webWrapper}>
-        {fontsLoaded && (
+        {fontsLoaded && introDone && (
           <LibraryProvider>
+            <ReadySignal onReady={markAppReady} />
             <PlayerProvider>
               <View style={styles.appContainer}>
                 <RootNavigator />
@@ -78,7 +110,12 @@ export default function App() {
           </LibraryProvider>
         )}
         {!splashDone && (
-          <AnimatedSplash ready={fontsLoaded} onFinish={finishSplash} onLogoDrawn={hideNativeSplash} />
+          <AnimatedSplash
+            ready={appReady}
+            onFinish={finishSplash}
+            onLogoDrawn={hideNativeSplash}
+            onIntroDone={onIntroDone}
+          />
         )}
       </View>
     </SafeAreaProvider>
