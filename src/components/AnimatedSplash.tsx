@@ -61,6 +61,7 @@ const RED = '#FF2D4A';
 
 const HOLD_MS = 450; // how long the finished "Λurix" stays up (covers the app mounting)
 const FADE_OUT_MS = 320;
+const NATIVE_FADE_WAIT_MS = 200; // extra still time after hiding the native splash (+100ms lead-in)
 const MAX_STEP_MS = 34; // clock never advances more than ~2 frames per painted frame
 
 const STAGE_W = 420;
@@ -125,6 +126,7 @@ export const AnimatedSplash: React.FC<Props> = ({ ready, onFinish, onLogoDrawn, 
   const [holdDone, setHoldDone] = useState(false);
   const started = useRef(false);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // One clock (ms). Everything on screen is a pure function of it.
   const clock = useSharedValue(0);
@@ -157,12 +159,19 @@ export const AnimatedSplash: React.FC<Props> = ({ ready, onFinish, onLogoDrawn, 
     if (started.current) return;
     started.current = true;
     onLogoDrawn();
-    running.value = true;
+    // The native splash fades out over ~300ms on top of this overlay. Keep the
+    // logo perfectly still until it is gone (this delay + the 100ms lead-in of
+    // the timeline), otherwise its fading centre Λ shows up as a ghost trail
+    // behind the sliding Λ.
+    startTimer.current = setTimeout(() => {
+      running.value = true;
+    }, NATIVE_FADE_WAIT_MS);
   }, [onLogoDrawn, running]);
 
   useEffect(
     () => () => {
       if (holdTimer.current) clearTimeout(holdTimer.current);
+      if (startTimer.current) clearTimeout(startTimer.current);
     },
     [],
   );
