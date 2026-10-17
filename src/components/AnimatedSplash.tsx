@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 import Reanimated, {
-  Easing as ReEasing,
   useAnimatedProps,
   useDerivedValue,
+  useFrameCallback,
   useSharedValue,
-  withTiming,
 } from 'react-native-reanimated';
 import Svg, { Circle, Path } from 'react-native-svg';
+import { scheduleOnRN } from 'react-native-worklets';
 import {
   DOT0,
   DOT_R0,
@@ -46,15 +46,22 @@ import {
  *    "u" and traces u, r (letters appear behind it) -> climbs the i and stops as
  *    its dot -> "x" slides in from the right.
  *
- * It runs on the UI thread (Reanimated), so it stays smooth even while the JS
- * thread is busy loading fonts and mounting the app underneath.
+ * Why the clock is frame-driven (not a wall-clock timer):
+ *  - The clock only advances by what was actually painted (at most MAX_STEP_MS
+ *    per frame). If the phone stalls for a moment, the animation pauses with it
+ *    instead of jumping ahead, so the Λ is always seen sliding and the letters
+ *    are always seen being written.
+ *  - `onIntroDone` fires when the LAST frame has really been drawn. App.tsx
+ *    mounts the heavy app only then, so nothing competes with the animation;
+ *    the hold below covers that mount.
  */
 
 const OFF_WHITE = '#F2EFE9';
 const RED = '#FF2D4A';
 
-const HOLD_MS = 450; // how long the finished "Λurix" stays up
+const HOLD_MS = 450; // how long the finished "Λurix" stays up (covers the app mounting)
 const FADE_OUT_MS = 320;
+const MAX_STEP_MS = 34; // clock never advances more than ~2 frames per painted frame
 
 const STAGE_W = 420;
 const STAGE_H = 220;
@@ -103,15 +110,17 @@ function drawOn(len: number, shown: number) {
 }
 
 type Props = {
-  /** True once the app underneath (fonts etc.) is ready to be revealed. */
+  /** True once the app underneath is mounted and ready to be revealed. */
   ready: boolean;
   /** Called once the overlay has fully faded out. */
   onFinish: () => void;
   /** Called when the logo has drawn, i.e. when it is safe to hide the native splash. */
   onLogoDrawn: () => void;
+  /** Called when the intro animation has really finished playing (last frame drawn). */
+  onIntroDone: () => void;
 };
 
-export const AnimatedSplash: React.FC<Props> = ({ ready, onFinish, onLogoDrawn }) => {
+export const AnimatedSplash: React.FC<Props> = ({ ready, onFinish, onLogoDrawn, onIntroDone }) => {
   const overlay = useRef(new Animated.Value(1)).current;
   const [holdDone, setHoldDone] = useState(false);
   const started = useRef(false);
@@ -119,15 +128,37 @@ export const AnimatedSplash: React.FC<Props> = ({ ready, onFinish, onLogoDrawn }
 
   // One clock (ms). Everything on screen is a pure function of it.
   const clock = useSharedValue(0);
+  const running = useSharedValue(false);
+  const finished = useSharedValue(false);
   const frame = useDerivedValue(() => frameAt(clock.value));
+
+  // Runs on the JS thread once the last animation frame has been drawn.
+  const introFinished = useCallback(() => {
+    onIntroDone();
+    holdTimer.current = setTimeout(() => setHoldDone(true), HOLD_MS);
+  }, [onIntroDone]);
+
+  // Frame-driven clock: advances by the time of each frame that is really painted.
+  useFrameCallback((info) => {
+    'worklet';
+    if (!running.value || finished.value) return;
+    const dt = Math.min(info.timeSincePreviousFrame ?? 16, MAX_STEP_MS);
+    const next = clock.value + dt;
+    if (next >= T_END) {
+      clock.value = T_END;
+      finished.value = true;
+      scheduleOnRN(introFinished);
+    } else {
+      clock.value = next;
+    }
+  });
 
   const start = useCallback(() => {
     if (started.current) return;
     started.current = true;
     onLogoDrawn();
-    clock.value = withTiming(T_END, { duration: T_END, easing: ReEasing.linear });
-    holdTimer.current = setTimeout(() => setHoldDone(true), T_END + HOLD_MS);
-  }, [onLogoDrawn, clock]);
+    running.value = true;
+  }, [onLogoDrawn, running]);
 
   useEffect(
     () => () => {
