@@ -68,7 +68,9 @@
       },
       "supabaseUrl": "https://rbjqboesujdvduypbrqu.supabase.co",
       "supabasePublishableKey": "sb_publishable_fungKL-VlMArXmg8622vnw_xInH2IcA",
-      "pushRegistrationEnabled": true
+      "pushRegistrationEnabled": true,
+      "syncSupabaseUrl": "https://camnqsrcsthdlsvfhfeb.supabase.co",
+      "syncSupabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhbW5xc3Jjc3RoZGxzdmZoZmViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyNDMzOTAsImV4cCI6MjEwNzgxOTM5MH0.kUaQZM7NHWw435EE23bL_8yaJPEP8mAXdv-5gnFSF3g"
     }
   }
 }

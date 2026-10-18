@@ -17,6 +17,7 @@ import { AnimatedSplash } from './src/components/AnimatedSplash';
 import { initNotifications } from './src/services/NotificationService';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { PlayerProvider } from './src/hooks/usePlayer';
+import { SyncPlayProvider } from './src/hooks/useSyncPlay';
 import { LibraryProvider, useLibrary } from './src/hooks/useLibrary';
 import { COLORS } from './src/constants/theme';
 import { getPlatformInfo, isNoteNativeAvailable } from './modules/note-native';
@@ -102,10 +103,12 @@ export default function App() {
           <LibraryProvider>
             <ReadySignal onReady={markAppReady} />
             <PlayerProvider>
-              <View style={styles.appContainer}>
-                <RootNavigator />
-                <StatusBar style="light" />
-              </View>
+              <SyncPlayProvider>
+                <View style={styles.appContainer}>
+                  <RootNavigator />
+                  <StatusBar style="light" />
+                </View>
+              </SyncPlayProvider>
             </PlayerProvider>
           </LibraryProvider>
         )}
