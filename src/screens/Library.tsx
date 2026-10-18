@@ -1,7 +1,7 @@
 import React from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Pencil, ListMusic, Users, Disc3, Music2, Download, Clock, Heart } from 'lucide-react-native';
+import { Pencil, ListMusic, Users, Disc3, Music2, Download, Clock, Heart, Radio } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { COLORS, SIZES, FONTS } from '../constants/theme';
@@ -21,6 +21,7 @@ type StackParams = {
   DownloadedMusic: undefined;
   History: undefined;
   Playlist: { playlistId: string };
+  SyncPlay: undefined;
   NowPlaying: undefined;
 };
 
@@ -44,6 +45,7 @@ export default function LibraryScreen() {
 
         <View style={styles.menu}>
           <ListRow icon={<ListMusic color={COLORS.text.primary} size={20} />} label="Playlists" onPress={() => navigation.navigate('PlaylistsList')} />
+          <ListRow icon={<Radio color={COLORS.text.primary} size={20} />} label="Sync Play" subtitle="Listen together, in sync" onPress={() => navigation.navigate('SyncPlay')} />
           <ListRow icon={<Users color={COLORS.text.primary} size={20} />} label="Artists" onPress={() => navigation.navigate('ArtistsList')} />
           <ListRow icon={<Disc3 color={COLORS.text.primary} size={20} />} label="Albums" onPress={() => navigation.navigate('AlbumsList')} />
           <ListRow icon={<Music2 color={COLORS.text.primary} size={20} />} label="Songs" onPress={() => navigation.navigate('SongsList')} />
