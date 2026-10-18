@@ -8,6 +8,7 @@ import SongsListScreen from '../screens/SongsList';
 import DownloadedMusicScreen from '../screens/DownloadedMusic';
 import HistoryScreen from '../screens/History';
 import PlaylistDetailScreen from '../screens/PlaylistDetail';
+import SyncPlayScreen from '../screens/SyncPlay';
 
 const Stack = createNativeStackNavigator();
 
@@ -30,6 +31,7 @@ export const LibraryStack = () => {
       <Stack.Screen name="DownloadedMusic" component={DownloadedMusicScreen} />
       <Stack.Screen name="History" component={HistoryScreen} />
       <Stack.Screen name="Playlist" component={PlaylistDetailScreen} />
+      <Stack.Screen name="SyncPlay" component={SyncPlayScreen} />
     </Stack.Navigator>
   );
 };

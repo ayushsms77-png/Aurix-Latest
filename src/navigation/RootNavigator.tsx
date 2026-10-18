@@ -6,6 +6,7 @@ import { COLORS } from '../constants/theme';
 import { useLibrary } from '../hooks/useLibrary';
 import ProfileSetupScreen from '../screens/ProfileSetup';
 import NowPlayingScreen from '../screens/NowPlaying';
+import SyncRoomScreen from '../screens/SyncRoom';
 
 const Stack = createNativeStackNavigator();
 
@@ -41,6 +42,12 @@ export const RootNavigator = () => {
           name="NowPlaying" 
           component={NowPlayingScreen} 
           options={{ presentation: 'fullScreenModal' }}
+        />
+        {/* Sync Play room: locked (no swipe-back; the screen asks before any exit). */}
+        <Stack.Screen
+          name="SyncRoom"
+          component={SyncRoomScreen}
+          options={{ presentation: 'fullScreenModal', gestureEnabled: false, animation: 'fade' }}
         />
       </Stack.Navigator>
     </NavigationContainer>
