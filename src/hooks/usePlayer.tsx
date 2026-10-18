@@ -23,6 +23,7 @@ import { DownloadService } from '../services/DownloadService';
 import { TasteService } from '../services/TasteService';
 import { artistKey } from '../recommendation/identity';
 import { pickFresh, songKey } from '../recommendation/mix';
+import { syncBridge } from '../sync/syncBridge';
 // TEMP (crash bisection test): react-native-playback-controls suspected of a
 // native crash. Commented out, not deleted -- re-enable by uncommenting this
 // import and the block below once confirmed.
@@ -73,6 +74,15 @@ type PlayerContextType = {
   cycleRepeat: () => void;
   isReady: boolean;
   canPlayCurrent: boolean;
+  /**
+   * Sync Play only: replace the queue with the room's playlist and load one
+   * song (paused unless `autoPlay`). Does nothing the normal player relies on.
+   */
+  loadForSync: (
+    tracks: Track[],
+    index: number,
+    options?: { autoPlay?: boolean; startPosition?: number }
+  ) => void;
 };
 
 /**
@@ -172,6 +182,8 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // ---- persistence ------------------------------------------------------
 
   const persistQueue = useCallback(() => {
+    // A Sync Play room's playlist must never replace the user's saved queue.
+    if (syncBridge.active) return;
     writeJsonDebounced(STORAGE_KEYS.queue, queueRef.current.snapshot(), 600);
   }, []);
 
@@ -199,6 +211,14 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     const upcoming = q.peekNext();
     const token = ++nextSlotToken.current;
     preloader.schedule(upcoming);
+
+    // Sync Play: the room decides what plays next, so the native player must
+    // never advance into a queued item by itself. (The next stream is still
+    // warmed above, which keeps the gap between songs short.)
+    if (syncBridge.active) {
+      playbackEngine.clearQueuedNext();
+      return;
+    }
 
     // Only attach a next item to a track that is really loaded in the engine.
     if (!current || playbackEngine.trackId !== current.id) return;
@@ -313,6 +333,15 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           MusicService.invalidateStream(track);
         }
 
+        // Sync Play: never skip on our own. The song stays as it is, the error
+        // is shown, and the people in the room press Next themselves.
+        if (syncBridge.active) {
+          autoSkips.current = 0;
+          setError(messageFor(err));
+          syncBridge.onLoadFailed?.(messageFor(err));
+          return;
+        }
+
         // A track that simply cannot play should not strand the queue: step
         // over it and keep going. Network failures are NOT skipped -- the
         // next track would fail identically, so the error is shown instead.
@@ -356,6 +385,11 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   useEffect(() => {
     playbackEngine.on('onStatus', (s) => setStatus(s));
     playbackEngine.on('onComplete', () => {
+      // Sync Play: the room moves on (all devices together), not this device.
+      if (syncBridge.active) {
+        syncBridge.onTrackEnded?.();
+        return;
+      }
       // Capture before advancing -- queueRef.current.current is about to
       // point at whatever plays next.
       const finishedTrack = queueRef.current.current;
@@ -386,6 +420,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     // the app finds out and catches its own state up, WITHOUT calling
     // playbackEngine.load() again (audio is already correctly playing).
     playbackEngine.on('onActiveTrackChanged', (mediaId, { endedNaturally }) => {
+      if (syncBridge.active) return; // the room, not the native queue, decides
       const q = queueRef.current;
       const expected = q.current;
 
@@ -443,6 +478,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
    * the refill below has not caught up, fetch related tracks and continue.
    */
   const extendWithRelated = useCallback(async (): Promise<boolean> => {
+    if (syncBridge.active) return false;
     const settings = LibraryService.getSettings();
     const last = queueRef.current.current;
     if (!settings.autoplayRelated || !last) return false;
@@ -485,6 +521,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
    * one while it was in flight.
    */
   const refillQueue = useCallback(async () => {
+    if (syncBridge.active) return;
     if (refillInFlight.current) return;
     if (Date.now() < refillBlockedUntil.current) return;
     if (!LibraryService.getSettings().autoplayRelated) return;
@@ -678,6 +715,10 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   );
 
   const togglePlayPause = useCallback(() => {
+    if (syncBridge.active) {
+      syncBridge.onTogglePlay?.();
+      return;
+    }
     const track = queueRef.current.current ?? currentTrack;
     if (!track) return;
     // Restored-but-never-loaded track: the first press starts it.
@@ -699,6 +740,10 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [bumpQueue, currentTrack, loadCurrent, status.isPlaying]);
 
   const next = useCallback(() => {
+    if (syncBridge.active) {
+      syncBridge.onNext?.();
+      return;
+    }
     // A track left before it counted as a genuine listen (see the history
     // effect above) was passed on, not finished -- a real taste signal.
     const leavingTrack = queueRef.current.current;
@@ -717,6 +762,10 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [bumpQueue, extendWithRelated, loadCurrent, persistQueue]);
 
   const previous = useCallback(() => {
+    if (syncBridge.active) {
+      syncBridge.onPrevious?.();
+      return;
+    }
     // Standard behaviour: restart the track if we are more than 3s in.
     if (playbackEngine.getPosition() > 3) {
       void playbackEngine.seekTo(0);
@@ -733,8 +782,35 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [bumpQueue, loadCurrent, persistQueue]);
 
   const seekTo = useCallback((seconds: number) => {
+    // Inside a Sync Play room nobody seeks: it would pull the others out of step.
+    if (syncBridge.active) return;
     void playbackEngine.seekTo(seconds);
   }, []);
+
+  const loadForSync = useCallback(
+    (
+      tracks: Track[],
+      index: number,
+      options: { autoPlay?: boolean; startPosition?: number } = {}
+    ) => {
+      const q = queueRef.current;
+      queueEpoch.current += 1;
+      autoAddedIds.current.clear();
+      refillSkipTrackId.current = null;
+      refillBlockedUntil.current = 0;
+      // Shuffle / repeat would reorder or loop the room's playlist.
+      q.setShuffle(false);
+      q.setRepeat('off');
+      playbackEngine.setRepeatOne(false);
+      q.setTracks(tracks, Math.max(0, Math.min(index, tracks.length - 1)), 'Sync Play');
+      bumpQueue();
+      void loadCurrent({
+        autoPlay: options.autoPlay ?? false,
+        startPosition: options.startPosition ?? 0,
+      });
+    },
+    [bumpQueue, loadCurrent]
+  );
 
   /**
    * Relative seek, matching the +/-10s the lock screen offers.
@@ -1009,6 +1085,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       cycleRepeat,
       isReady,
       canPlayCurrent: currentTrack ? MusicService.canPlay(currentTrack) : false,
+      loadForSync,
     }),
     [
       currentTrack,
@@ -1039,6 +1116,7 @@ export const PlayerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       reshuffle,
       cycleRepeat,
       isReady,
+      loadForSync,
     ]
   );
 
