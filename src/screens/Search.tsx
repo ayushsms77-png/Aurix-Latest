@@ -10,7 +10,6 @@ import {
   Image,
   Keyboard,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search as SearchIcon, X, Clock, TrendingUp, Play } from 'lucide-react-native';
 import { COLORS, SIZES, FONTS } from '../constants/theme';
@@ -22,31 +21,27 @@ import { BROWSE_CATEGORIES } from '../data/catalog';
 import { Track } from '../core/types';
 import { useSearch } from '../hooks/useSearch';
 import { usePlayer } from '../hooks/usePlayer';
-import { MusicService } from '../services/MusicService';
+import { DiscoveryService } from '../services/DiscoveryService';
 import { useNavigation } from '@react-navigation/native';
 
-const RECENT_KEY = 'note_recent_searches';
 const MAX_RECENT = 4;
-const TRENDING_QUERY = 'trending songs this week';
-const CHART_QUERY = 'top global hits 2024';
 /** Max songs shown for a search (top result + the rows under "Songs"); quality drops further down. */
 const MAX_SONGS_SHOWN = 7;
 
-async function loadRecent(): Promise<string[]> {
-  try {
-    const raw = await AsyncStorage.getItem(RECENT_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-async function saveRecent(list: string[]) {
-  try {
-    await AsyncStorage.setItem(RECENT_KEY, JSON.stringify(list));
-  } catch {
-    // Non-critical — worst case, recent searches don't persist this session.
-  }
-}
+/** Grey placeholder rows, so the page keeps its height while data loads. */
+const SkeletonRows = ({ count, withImage }: { count: number; withImage?: boolean }) => (
+  <View>
+    {Array.from({ length: count }).map((_, i) => (
+      <View key={i} style={styles.skelRow}>
+        {withImage ? <View style={styles.skelImage} /> : <View style={styles.skelDot} />}
+        <View style={{ flex: 1 }}>
+          <View style={[styles.skelLine, { width: `${62 - (i % 3) * 10}%` }]} />
+          <View style={[styles.skelLine, styles.skelLineSmall, { width: `${38 + (i % 2) * 8}%` }]} />
+        </View>
+      </View>
+    ))}
+  </View>
+);
 
 export default function SearchScreen() {
   const insets = useSafeAreaInsets();
@@ -64,26 +59,19 @@ export default function SearchScreen() {
   } = useSearch();
 
   const { playTrack, currentTrack, isPlaying, togglePlayPause, isLoading, next } = usePlayer();
-  const [expandingId, setExpandingId] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [trending, setTrending] = useState<Track[]>([]);
-  const [chart, setChart] = useState<Track[]>([]);
+  // Explore data comes from DiscoveryService: already loaded at app start and
+  // read synchronously here, so the first frame is already complete.
+  const [discovery, setDiscovery] = useState(DiscoveryService.get);
+  const { recent: recentSearches, trending, chart } = discovery;
   const [addingTrack, setAddingTrack] = useState<Track | null>(null);
 
   const isSearchingActive = query.trim().length > 0;
 
-  // Discovery content — loads once, independent of search state.
   useEffect(() => {
-    loadRecent().then(setRecentSearches);
-    (async () => {
-      const [t, c] = await Promise.all([
-        MusicService.search(TRENDING_QUERY, { limit: 8 }).then((r) => r.tracks).catch(() => []),
-        MusicService.search(CHART_QUERY, { limit: 10 }).then((r) => r.tracks).catch(() => []),
-      ]);
-      setTrending(t);
-      setChart(c);
-    })();
+    const unsubscribe = DiscoveryService.subscribe(setDiscovery);
+    void DiscoveryService.warm(); // no-op when already loaded; refreshes when old
+    return unsubscribe;
   }, []);
 
   const commitSearch = useCallback(
@@ -92,29 +80,20 @@ export default function SearchScreen() {
       searchNow(term);
       const trimmed = term.trim();
       if (!trimmed) return;
-      setRecentSearches((prev) => {
-        const nextList = [trimmed, ...prev.filter((s) => s.toLowerCase() !== trimmed.toLowerCase())].slice(
-          0,
-          MAX_RECENT
-        );
-        saveRecent(nextList);
-        return nextList;
-      });
+      const prev = DiscoveryService.get().recent;
+      DiscoveryService.saveRecent(
+        [trimmed, ...prev.filter((x) => x.toLowerCase() !== trimmed.toLowerCase())].slice(0, MAX_RECENT)
+      );
     },
     [setQuery, searchNow]
   );
 
   const clearAllRecent = useCallback(() => {
-    setRecentSearches([]);
-    saveRecent([]);
+    DiscoveryService.saveRecent([]);
   }, []);
 
   const removeOneRecent = useCallback((term: string) => {
-    setRecentSearches((prev) => {
-      const nextList = prev.filter((s) => s !== term);
-      saveRecent(nextList);
-      return nextList;
-    });
+    DiscoveryService.saveRecent(DiscoveryService.get().recent.filter((x) => x !== term));
   }, []);
 
   /**
@@ -135,36 +114,32 @@ export default function SearchScreen() {
     [playTrack]
   );
 
+  /** Artists, albums and playlists open their own page (inside the Search stack). */
   const onOpenCollection = useCallback(
-    async (id: string, browseId: string, name: string, kind: 'album' | 'playlist') => {
+    (track: Track, kind: 'album' | 'playlist') => {
       Keyboard.dismiss();
-      setExpandingId(id);
-      try {
-        const page = kind === 'album' ? await MusicService.getAlbum(browseId) : await MusicService.getPlaylist(browseId);
-        if (page.tracks.length) playTrack(page.tracks[0], { tracks: page.tracks, label: name });
-      } catch {
-        // The inline error row already covers failed lookups.
-      } finally {
-        setExpandingId(null);
-      }
+      (navigation as any).navigate('CollectionPage', {
+        kind,
+        browseId: track.sourceId,
+        title: track.title,
+        subtitle: track.artist.name,
+        imageUrl: track.albumImageUrl,
+      });
     },
-    [playTrack]
+    [navigation]
   );
 
   const onOpenArtist = useCallback(
-    async (id: string, browseId: string, name: string) => {
+    (track: Track) => {
       Keyboard.dismiss();
-      setExpandingId(id);
-      try {
-        const tracks = await MusicService.getArtistTracks(browseId);
-        if (tracks.length) playTrack(tracks[0], { tracks, label: name });
-      } catch {
-        /* handled by the error row */
-      } finally {
-        setExpandingId(null);
-      }
+      (navigation as any).navigate('ArtistPage', {
+        browseId: track.sourceId,
+        name: track.title,
+        imageUrl: track.albumImageUrl,
+        subtitle: track.artist.name,
+      });
     },
-    [playTrack]
+    [navigation]
   );
 
   // Synthetic Track objects for non-track results — unchanged from before.
@@ -208,15 +183,9 @@ export default function SearchScreen() {
     [results.playlists]
   );
 
-  const openArtistRow = useCallback((track: Track) => onOpenArtist(track.id, track.sourceId, track.title), [onOpenArtist]);
-  const openAlbumRow = useCallback(
-    (track: Track) => onOpenCollection(track.id, track.sourceId, track.title, 'album'),
-    [onOpenCollection]
-  );
-  const openPlaylistRow = useCallback(
-    (track: Track) => onOpenCollection(track.id, track.sourceId, track.title, 'playlist'),
-    [onOpenCollection]
-  );
+  const openArtistRow = onOpenArtist;
+  const openAlbumRow = useCallback((track: Track) => onOpenCollection(track, 'album'), [onOpenCollection]);
+  const openPlaylistRow = useCallback((track: Track) => onOpenCollection(track, 'playlist'), [onOpenCollection]);
 
   const [topResult, ...allRestTracks] = results.tracks;
   const restTracks = allRestTracks.slice(0, MAX_SONGS_SHOWN - 1);
@@ -327,7 +296,7 @@ export default function SearchScreen() {
                 <Text style={styles.sectionTitle}>Artists</Text>
                 <View style={styles.resultsList}>
                   {artistRows.map((row) => (
-                    <TrackRow key={row.id} track={row} onPress={openArtistRow} isLoading={expandingId === row.id} />
+                    <TrackRow key={row.id} track={row} onPress={openArtistRow} />
                   ))}
                 </View>
               </>
@@ -338,7 +307,7 @@ export default function SearchScreen() {
                 <Text style={styles.sectionTitle}>Albums</Text>
                 <View style={styles.resultsList}>
                   {albumRows.map((row) => (
-                    <TrackRow key={row.id} track={row} onPress={openAlbumRow} isLoading={expandingId === row.id} />
+                    <TrackRow key={row.id} track={row} onPress={openAlbumRow} />
                   ))}
                 </View>
               </>
@@ -349,7 +318,7 @@ export default function SearchScreen() {
                 <Text style={styles.sectionTitle}>Playlists</Text>
                 <View style={styles.resultsList}>
                   {playlistRows.map((row) => (
-                    <TrackRow key={row.id} track={row} onPress={openPlaylistRow} isLoading={expandingId === row.id} />
+                    <TrackRow key={row.id} track={row} onPress={openPlaylistRow} />
                   ))}
                 </View>
               </>
@@ -383,6 +352,13 @@ export default function SearchScreen() {
               </View>
             )}
 
+            {showBrowse && trending.length === 0 && discovery.status === 'loading' && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Trending Searches</Text>
+                <SkeletonRows count={4} />
+              </View>
+            )}
+
             {showBrowse && trending.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Trending Searches</Text>
@@ -395,6 +371,13 @@ export default function SearchScreen() {
                     </View>
                   </TouchableOpacity>
                 ))}
+              </View>
+            )}
+
+            {showBrowse && chart.length === 0 && discovery.status === 'loading' && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Top Songs</Text>
+                <SkeletonRows count={5} withImage />
               </View>
             )}
 
@@ -458,6 +441,11 @@ export default function SearchScreen() {
 }
 
 const styles = StyleSheet.create({
+  skelRow: { flexDirection: 'row', alignItems: 'center', gap: SIZES.smd, minHeight: 52, paddingVertical: 6 },
+  skelImage: { width: 44, height: 44, borderRadius: 8, backgroundColor: COLORS.surfaceLight },
+  skelDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: COLORS.surfaceLight },
+  skelLine: { height: 12, borderRadius: 6, backgroundColor: COLORS.surfaceLight },
+  skelLineSmall: { height: 10, marginTop: 8, opacity: 0.7 },
   container: { flex: 1, backgroundColor: COLORS.background },
   scrollContent: { paddingHorizontal: SIZES.md },
   headerTitle: {
