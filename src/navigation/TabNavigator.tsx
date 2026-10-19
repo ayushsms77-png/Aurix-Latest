@@ -5,7 +5,7 @@ import { Home, Search, Library, CircleUserRound } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 
 import HomeScreen from '../screens/Home';
-import SearchScreen from '../screens/Search';
+import { SearchStack } from './SearchStack';
 import ProfileScreen from '../screens/Profile';
 import { LibraryStack } from './LibraryStack';
 
@@ -34,7 +34,7 @@ export const TabNavigator = () => {
       />
       <Tab.Screen 
         name="SearchTab" 
-        component={SearchScreen} 
+        component={SearchStack} 
         options={{
           tabBarIcon: ({ color, focused }) => (
             <Search color={color} size={24} strokeWidth={focused ? 2 : 1.5} />
