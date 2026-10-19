@@ -1,6 +1,7 @@
 import { metadataCache, TTL } from '../../core/cache';
 import { appError, AppError, toAppError } from '../../core/errors';
 import {
+  ArtistPage,
   emptySearchResults,
   RemotePlaylist,
   ResolvedStream,
@@ -27,6 +28,7 @@ import {
   normalizePlaylistBrowseId,
   parseAlbumItem,
   parseArtistItem,
+  parseArtistPage,
   parseBrowseHeader,
   parsePlaylistItem,
   parseTrackItem,
@@ -318,6 +320,76 @@ export class YouTubeResolver implements TrackResolver {
     } catch (e) {
       throw toAppError(e, 'search_failed');
     }
+  }
+
+  /**
+   * A whole artist page. Never depends on one fragile parse: the name and
+   * photo fall back to what search already gave us, and the song list falls
+   * back to a plain "<artist> songs" search, so the page is never empty just
+   * because YouTube changed a renderer.
+   */
+  async getArtistPage(
+    browseId: string,
+    hint: { name?: string; imageUrl?: string; subtitle?: string } = {},
+    signal?: AbortSignal
+  ): Promise<ArtistPage> {
+    const cacheKey = `yt:artistpage:${browseId}`;
+    const cached = metadataCache.get<ArtistPage>(cacheKey);
+    if (cached) return cached;
+
+    let parsed: ReturnType<typeof parseArtistPage> | null = null;
+    try {
+      parsed = parseArtistPage(await innertube.browse(browseId, signal));
+    } catch (e) {
+      if (signal?.aborted) throw toAppError(e, 'search_failed');
+    }
+
+    const name = parsed?.name || hint.name || '';
+    let songs = (parsed?.songs ?? []).filter((t) => t.sourceId);
+
+    // The page's own songs shelf is often just 5: follow "See all" for the rest.
+    if (songs.length < 8 && parsed?.songsBrowseId) {
+      try {
+        const full = await this.getPlaylist(parsed.songsBrowseId, { signal });
+        if (full.tracks.length > songs.length) songs = full.tracks;
+      } catch {
+        /* keep the shelf songs */
+      }
+    }
+
+    // Still thin (or the page failed to load): search for the artist's songs.
+    if (songs.length < 3 && name) {
+      try {
+        const res = await this.search(`${name} songs`, { filter: 'Songs', signal, limit: 20 });
+        const first = name.toLowerCase().split(/\s+/)[0];
+        const matching = res.tracks.filter((t) => t.artist.name.toLowerCase().includes(first));
+        const found = matching.length >= 3 ? matching : res.tracks;
+        const seen = new Set(songs.map((t) => t.id));
+        songs = [...songs, ...found.filter((t) => !seen.has(t.id))];
+      } catch {
+        /* handled below */
+      }
+    }
+
+    // Prefer real audio tracks over music videos, but never end up with nothing.
+    const audioOnly = songs.filter((t) => t.isVideo !== true);
+    if (audioOnly.length >= 3) songs = audioOnly;
+    songs = dedupeBy(songs, (t) => t.id).slice(0, 50);
+
+    if (!songs.length && !name) throw appError('search_failed', 'Could not load this artist.');
+
+    const page: ArtistPage = {
+      browseId,
+      name: name || 'Artist',
+      imageUrl: parsed?.imageUrl || hint.imageUrl || songs[0]?.albumImageUrl || '',
+      subtitle: parsed?.subtitle || hint.subtitle,
+      songs,
+      albums: parsed?.albums ?? [],
+    };
+
+    // Only a page that has songs is worth remembering.
+    if (songs.length) metadataCache.set(cacheKey, page, TTL.playlist);
+    return page;
   }
 
   async getRelated(track: Track, signal?: AbortSignal): Promise<Track[]> {

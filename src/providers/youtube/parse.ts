@@ -208,6 +208,11 @@ export function parseAlbumItem(item: Any): Album | null {
 }
 
 export function parseArtistItem(item: Any): ArtistResult | null {
+  // Fan/user channels ("Profile - name1234") are not artists: skip them.
+  const pageType =
+    item?.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs
+      ?.browseEndpointContextMusicConfig?.pageType;
+  if (pageType === 'MUSIC_PAGE_TYPE_USER_CHANNEL') return null;
   const browseId = item?.navigationEndpoint?.browseEndpoint?.browseId;
   const name = runsText(flexColumn(item, 0));
   if (!browseId || !name) return null;
@@ -444,4 +449,103 @@ export function findContinuation(node: Any): string | undefined {
 
   visit(node);
   return token;
+}
+
+
+// ---------------------------------------------------------------------------
+// Artist page
+// ---------------------------------------------------------------------------
+
+export type ParsedArtistPage = {
+  name: string;
+  imageUrl: string;
+  subtitle?: string;
+  songs: Track[];
+  albums: Album[];
+  /** "See all" songs browse id, when the page links to the full list. */
+  songsBrowseId?: string;
+};
+
+/** An album/single card from an artist-page carousel (`musicTwoRowItemRenderer`). */
+export function parseTwoRowAlbum(item: Any, fallbackArtist: string): Album | null {
+  const browseId: string | undefined = item?.navigationEndpoint?.browseEndpoint?.browseId;
+  if (!browseId || !browseId.startsWith('MPRE')) return null;
+  const title = runsText(item?.title);
+  if (!title) return null;
+
+  const texts = runs(item?.subtitle)
+    .map((r) => String(r?.text ?? '').trim())
+    .filter((t) => t && t !== '•');
+  const year = texts.find((t) => /^\d{4}$/.test(t));
+
+  return {
+    id: `youtube:album:${browseId}`,
+    provider: 'youtube',
+    browseId,
+    title,
+    artist: fallbackArtist,
+    coverImageUrl: pickThumbnail(item, 400),
+    year,
+  };
+}
+
+/**
+ * Read an artist browse response: header (name, photo), the songs shelf, and
+ * the album/single carousels. Every part is optional; the caller has a
+ * fallback for whatever is missing.
+ */
+export function parseArtistPage(response: Any): ParsedArtistPage {
+  const out: ParsedArtistPage = { name: '', imageUrl: '', songs: [], albums: [] };
+
+  const header =
+    response?.header?.musicImmersiveHeaderRenderer ??
+    response?.header?.musicVisualHeaderRenderer ??
+    response?.header?.musicHeaderRenderer ??
+    response?.header?.musicResponsiveHeaderRenderer;
+  if (header) {
+    out.name = runsText(header.title).trim();
+    out.imageUrl =
+      pickThumbnail(header, 720) ||
+      pickThumbnail({ thumbnail: header?.foregroundThumbnail }, 720);
+    const listeners = runsText(header.monthlyListenerCount).trim();
+    if (listeners) out.subtitle = listeners;
+  }
+
+  const seenAlbums = new Set<string>();
+  const visit = (n: Any) => {
+    if (!n || typeof n !== 'object') return;
+
+    const shelf = n.musicShelfRenderer;
+    if (shelf && out.songs.length === 0) {
+      const title = runsText(shelf.title);
+      if (/song/i.test(title)) {
+        out.songs = (shelf.contents ?? [])
+          .map((c: Any) => parseTrackItem(c?.musicResponsiveListItemRenderer))
+          .filter((t: Track | null): t is Track => t !== null);
+        out.songsBrowseId =
+          shelf.title?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId ??
+          shelf.bottomEndpoint?.browseEndpoint?.browseId;
+      }
+    }
+
+    const carousel = n.musicCarouselShelfRenderer;
+    if (carousel) {
+      for (const c of carousel.contents ?? []) {
+        const album = parseTwoRowAlbum(c?.musicTwoRowItemRenderer, out.name || 'Artist');
+        if (album && !seenAlbums.has(album.browseId)) {
+          seenAlbums.add(album.browseId);
+          out.albums.push(album);
+        }
+      }
+    }
+
+    for (const value of Object.values(n)) {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') visit(value as Any);
+    }
+  };
+  visit(response?.contents);
+
+  out.albums = out.albums.slice(0, 15);
+  return out;
 }
