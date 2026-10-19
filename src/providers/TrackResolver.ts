@@ -1,4 +1,5 @@
 import {
+  ArtistPage,
   Album,
   ArtistResult,
   ProviderId,
@@ -56,6 +57,13 @@ export interface TrackResolver {
 
   /** Top tracks for an artist. */
   getArtistTracks?(browseId: string, signal?: AbortSignal): Promise<Track[]>;
+
+  /** A full artist page. `hint` is what the caller already knows (from search). */
+  getArtistPage?(
+    browseId: string,
+    hint?: { name?: string; imageUrl?: string; subtitle?: string },
+    signal?: AbortSignal
+  ): Promise<ArtistPage>;
 
   /** Related tracks, used to keep the queue going after the last item. */
   getRelated?(track: Track, signal?: AbortSignal): Promise<Track[]>;
