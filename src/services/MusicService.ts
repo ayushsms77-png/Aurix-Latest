@@ -1,6 +1,7 @@
 import { metadataCache } from '../core/cache';
 import { appError, toAppError } from '../core/errors';
 import {
+  ArtistPage,
   emptySearchResults,
   SearchFilter,
   SearchResults,
@@ -101,6 +102,17 @@ class MusicServiceImpl {
     const provider = providers.default;
     if (!provider.getArtistTracks) return [];
     return provider.getArtistTracks(browseId, signal);
+  }
+
+  /** A full artist page (header, songs, albums), with its own fallbacks. */
+  async getArtistPage(
+    browseId: string,
+    hint?: { name?: string; imageUrl?: string; subtitle?: string },
+    signal?: AbortSignal
+  ): Promise<ArtistPage> {
+    const provider = providers.default;
+    if (!provider.getArtistPage) throw appError('search_failed', 'Artist pages are not supported');
+    return provider.getArtistPage(browseId, hint, signal);
   }
 
   /**
