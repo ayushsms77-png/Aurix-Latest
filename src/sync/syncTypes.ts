@@ -11,9 +11,10 @@ import { Track, trackKey } from '../core/types';
 export const SYNC = {
   MAX_TRACKS: 10,
   MAX_MEMBERS: 4,
-  CODE_LENGTH: 6,
+  CODE_LENGTH: 3,
   /** No 0/O, 1/I/L: codes are read aloud and typed by hand. */
-  CODE_ALPHABET: 'ABCDEFGHJKMNPQRSTUVWXYZ23456789',
+  CODE_LETTERS: 'ABCDEFGHJKMNPQRSTUVWXYZ', // no I, L, O
+  CODE_DIGITS: '23456789', // no 0, 1
   NAME_MAX: 20,
 
   /** A dropped device keeps its seat for this long; an empty room closes after it. */
@@ -92,18 +93,18 @@ export type StateMsg = { s: RoomState; pl?: SyncTrack[] };
 // ---------------------------------------------------------------------------
 
 export function generateCode(): string {
-  let out = '';
-  for (let i = 0; i < SYNC.CODE_LENGTH; i++) {
-    out += SYNC.CODE_ALPHABET[Math.floor(Math.random() * SYNC.CODE_ALPHABET.length)];
-  }
-  return out;
+  const L = SYNC.CODE_LETTERS;
+  const D = SYNC.CODE_DIGITS;
+  const pick = (set: string) => set[Math.floor(Math.random() * set.length)];
+  return pick(L) + pick(L) + pick(D); // e.g. AC2
 }
 
-/** Uppercase, drop spaces/dashes; returns null if it can not be a valid code. */
+/** Uppercase, drop spaces/dashes; returns null unless it is two letters then a digit. */
 export function normalizeCode(input: string): string | null {
   const code = input.toUpperCase().replace(/[\s-]/g, '');
   if (code.length !== SYNC.CODE_LENGTH) return null;
-  for (const ch of code) if (!SYNC.CODE_ALPHABET.includes(ch)) return null;
+  if (!SYNC.CODE_LETTERS.includes(code[0]) || !SYNC.CODE_LETTERS.includes(code[1])) return null;
+  if (!SYNC.CODE_DIGITS.includes(code[2])) return null;
   return code;
 }
 
