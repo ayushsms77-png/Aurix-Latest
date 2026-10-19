@@ -15,6 +15,7 @@ import {
 } from '@expo-google-fonts/outfit';
 import { AnimatedSplash } from './src/components/AnimatedSplash';
 import { initNotifications } from './src/services/NotificationService';
+import { DiscoveryService } from './src/services/DiscoveryService';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { PlayerProvider } from './src/hooks/usePlayer';
 import { SyncPlayProvider } from './src/hooks/useSyncPlay';
@@ -62,6 +63,14 @@ export default function App() {
   useEffect(() => {
     if (splashDone) void initNotifications();
   }, [splashDone]);
+
+  // Explore's trending / top songs / recent searches: loaded now, in the
+  // background, so the Search tab is already full when it is first opened.
+  useEffect(() => {
+    if (!introDone) return;
+    const t = setTimeout(() => void DiscoveryService.warm(), 1200);
+    return () => clearTimeout(t);
+  }, [introDone]);
 
   // Proof-of-connection for the Android native module. Dev-only, no UI impact.
   useEffect(() => {
