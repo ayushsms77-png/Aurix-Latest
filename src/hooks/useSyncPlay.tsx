@@ -527,7 +527,7 @@ export const SyncPlayProvider: React.FC<{ children: ReactNode }> = ({ children }
           roomTracks = prepared.tracks;
           const playlist = roomTracks.map(toSyncTrack).filter((t): t is SyncTrack => t !== null);
 
-          for (let attempt = 0; attempt < 4 && !opened; attempt++) {
+          for (let attempt = 0; attempt < 8 && !opened; attempt++) {
             const candidate = new SyncSession({
               code: generateCode(),
               deviceId,
@@ -544,7 +544,7 @@ export const SyncPlayProvider: React.FC<{ children: ReactNode }> = ({ children }
               opened = candidate;
             } catch (e) {
               if (cancelled()) return;
-              if (e instanceof SyncError && e.kind === 'collision' && attempt < 3) continue;
+              if (e instanceof SyncError && e.kind === 'collision' && attempt < 7) continue;
               throw e;
             }
           }
