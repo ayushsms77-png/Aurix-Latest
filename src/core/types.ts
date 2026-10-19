@@ -54,6 +54,16 @@ export type ArtistResult = {
   subtitle?: string;
 };
 
+/** Everything an artist page shows. */
+export type ArtistPage = {
+  browseId: string;
+  name: string;
+  imageUrl: string;
+  subtitle?: string;
+  songs: Track[];
+  albums: Album[];
+};
+
 /** A playlist that lives on a provider (not one the user created locally). */
 export type RemotePlaylist = {
   id: string;
