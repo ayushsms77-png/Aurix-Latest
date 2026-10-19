@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Keyboard,
   ScrollView,
@@ -17,6 +16,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { COLORS, FONTS, SIZES } from '../constants/theme';
 import { GlassCard } from '../components/common/GlassCard';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { Playlist } from '../core/types';
 import { useLibrary } from '../hooks/useLibrary';
 import { useSyncPlay } from '../hooks/useSyncPlay';
@@ -35,7 +35,7 @@ const STEPS: { title: string; body: string }[] = [
   },
   {
     title: 'Share the room code',
-    body: `Up to ${SYNC.MAX_MEMBERS - 1} friends enter the code below on their own phones. Everyone hears the same song at the same time.`,
+    body: `Up to ${SYNC.MAX_MEMBERS - 1} friends enter the room code on their own phones. Everyone hears the same song at the same time.`,
   },
 ];
 
@@ -50,6 +50,7 @@ export default function SyncPlayScreen() {
   const { playlists, likedPlaylist, profile } = useLibrary();
   const sync = useSyncPlay();
   const [codeInput, setCodeInput] = useState('');
+  const [pending, setPending] = useState<Playlist | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -79,20 +80,15 @@ export default function SyncPlayScreen() {
 
   const onPick = (p: Playlist) => {
     if (!available || busy) return;
-    Alert.alert(
-      'Start a Sync Play room?',
-      `"${p.name}" (${p.tracks.length} ${p.tracks.length === 1 ? 'song' : 'songs'}) will be shared with everyone who joins. Songs can't be changed once the room starts.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Start room',
-          onPress: () => {
-            openRoomScreen();
-            sync.createRoom(p.tracks, displayName);
-          },
-        },
-      ]
-    );
+    setPending(p);
+  };
+
+  const startPending = () => {
+    const p = pending;
+    setPending(null);
+    if (!p) return;
+    openRoomScreen();
+    sync.createRoom(p.tracks, displayName);
   };
 
   const normalized = normalizeCode(codeInput);
@@ -119,7 +115,7 @@ export default function SyncPlayScreen() {
 
       <ScrollView
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + SIZES.xxl }]}
+        contentContainerStyle={[styles.scroll, { paddingBottom: SIZES.bottomInset + insets.bottom + SIZES.xl }]}
       >
         {sync.flag.checked && !sync.flag.enabled && (
           <View style={styles.maintenance}>
@@ -134,6 +130,35 @@ export default function SyncPlayScreen() {
             <Text style={styles.errorText}>{sync.error}</Text>
           </TouchableOpacity>
         )}
+
+        <Text style={styles.sectionTitle}>Join a room</Text>
+        <Text style={styles.sectionHint}>Got a 3-character code from a friend? Enter it here.</Text>
+        <View style={[styles.joinRow, { marginBottom: SIZES.lg }]}>
+          <TextInput
+            style={styles.codeInput}
+            placeholder="AB2"
+            placeholderTextColor={COLORS.text.disabled}
+            value={codeInput}
+            onChangeText={(t) => setCodeInput(t.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+            maxLength={SYNC.CODE_LENGTH}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            autoComplete="off"
+            returnKeyType="go"
+            onSubmitEditing={onJoin}
+          />
+          <TouchableOpacity
+            style={[styles.joinButton, (!normalized || !available || busy) && styles.joinDisabled]}
+            disabled={!normalized || !available || busy}
+            onPress={onJoin}
+          >
+            {sync.flag.checking ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.joinText}>Join</Text>
+            )}
+          </TouchableOpacity>
+        </View>
 
         <GlassCard intensity={20} style={styles.card}>
           <Text style={styles.cardTitle}>Listen together, in sync</Text>
@@ -217,35 +242,20 @@ export default function SyncPlayScreen() {
           );
         })}
 
-        <Text style={[styles.sectionTitle, { marginTop: SIZES.xl }]}>Join a room</Text>
-        <Text style={styles.sectionHint}>Got a code from a friend? Enter it here.</Text>
-        <View style={styles.joinRow}>
-          <TextInput
-            style={styles.codeInput}
-            placeholder="ROOM CODE"
-            placeholderTextColor={COLORS.text.disabled}
-            value={codeInput}
-            onChangeText={(t) => setCodeInput(t.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-            maxLength={SYNC.CODE_LENGTH}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            autoComplete="off"
-            returnKeyType="go"
-            onSubmitEditing={onJoin}
-          />
-          <TouchableOpacity
-            style={[styles.joinButton, (!normalized || !available || busy) && styles.joinDisabled]}
-            disabled={!normalized || !available || busy}
-            onPress={onJoin}
-          >
-            {sync.flag.checking ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.joinText}>Join</Text>
-            )}
-          </TouchableOpacity>
-        </View>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={!!pending}
+        title="Start a Sync Play room?"
+        message={
+          pending
+            ? `"${pending.name}" (${pending.tracks.length} ${pending.tracks.length === 1 ? 'song' : 'songs'}) will be shared with everyone who joins. Songs can't be changed once the room starts.`
+            : ''
+        }
+        confirmLabel="Start room"
+        onCancel={() => setPending(null)}
+        onConfirm={startPending}
+      />
     </View>
   );
 }

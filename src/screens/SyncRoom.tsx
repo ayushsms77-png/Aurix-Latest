@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   BackHandler,
   Easing,
@@ -22,6 +21,7 @@ import { useProgress } from '../hooks/usePlayer';
 import { SyncHealth, useSyncPlay } from '../hooks/useSyncPlay';
 import { RosterEntry } from '../sync/SyncSession';
 import { SYNC } from '../sync/syncTypes';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 
 const LIVE = '#34D399';
 const SYNCING = '#F5A524';
@@ -147,16 +147,8 @@ export default function SyncRoomScreen() {
     navigation.goBack();
   }, [navigation, sync]);
 
-  const confirmExit = useCallback(() => {
-    Alert.alert(
-      'Exit Sync Play?',
-      'Are you sure you want to exit? Playback will stop on this device.',
-      [
-        { text: 'Stay', style: 'cancel' },
-        { text: 'Exit', style: 'destructive', onPress: exitRoom },
-      ]
-    );
-  }, [exitRoom]);
+  const [exitAsk, setExitAsk] = useState(false);
+  const confirmExit = useCallback(() => setExitAsk(true), []);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -447,6 +439,20 @@ export default function SyncRoomScreen() {
           </View>
         </View>
       </Modal>
+
+      <ConfirmDialog
+        visible={exitAsk}
+        title="Exit Sync Play?"
+        message="Are you sure you want to exit? Playback will stop on this device."
+        confirmLabel="Exit"
+        cancelLabel="Stay"
+        destructive
+        onCancel={() => setExitAsk(false)}
+        onConfirm={() => {
+          setExitAsk(false);
+          exitRoom();
+        }}
+      />
     </View>
   );
 }
