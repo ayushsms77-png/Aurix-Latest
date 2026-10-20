@@ -4,7 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Home, Search, Library, CircleUserRound } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 
-import HomeScreen from '../screens/Home';
+import { HomeStack } from './HomeStack';
 import { SearchStack } from './SearchStack';
 import ProfileScreen from '../screens/Profile';
 import { LibraryStack } from './LibraryStack';
@@ -25,7 +25,7 @@ export const TabNavigator = () => {
     >
       <Tab.Screen 
         name="HomeTab" 
-        component={HomeScreen} 
+        component={HomeStack} 
         options={{
           tabBarIcon: ({ color, focused }) => (
             <Home color={color} size={24} strokeWidth={focused ? 2 : 1.5} />
