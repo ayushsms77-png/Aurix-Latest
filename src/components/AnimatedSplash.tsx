@@ -61,7 +61,7 @@ const RED = '#FF2D4A';
 
 const HOLD_MS = 450; // how long the finished "Λurix" stays up (covers the app mounting)
 const FADE_OUT_MS = 320;
-const NATIVE_FADE_WAIT_MS = 200; // extra still time after hiding the native splash (+100ms lead-in)
+const NATIVE_FADE_WAIT_MS = 300; // extra still time after hiding the native splash (+100ms lead-in = 400ms)
 const MAX_STEP_MS = 34; // clock never advances more than ~2 frames per painted frame
 
 const STAGE_W = 420;
