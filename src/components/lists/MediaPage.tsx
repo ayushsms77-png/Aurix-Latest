@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ListPlus, Music2, Play, Shuffle } from 'lucide-react-native';
+import { QueueAddIcon } from '../icons/QueueAddIcon';
+import { SaveToPlaylistSheet } from './SaveToPlaylistSheet';
 import { useNavigation } from '@react-navigation/native';
 import { COLORS, FONTS, SIZES } from '../../constants/theme';
 import { Track } from '../../core/types';
@@ -33,6 +35,8 @@ type Props = {
   /** Shown between the buttons and the song list (e.g. an albums row). */
   extra?: React.ReactNode;
   listTitle?: string;
+  /** Albums and playlists can be saved whole into one of your playlists. */
+  canSaveToPlaylist?: boolean;
 };
 
 /**
@@ -52,12 +56,28 @@ export function MediaPage({
   onRetry,
   extra,
   listTitle = 'Songs',
+  canSaveToPlaylist,
 }: Props) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { playTrack, addToQueue, currentTrack, isPlaying, isLoading, togglePlayPause, shuffle, toggleShuffle, next } =
+  const { playTrack, addToQueue, queue, currentTrack, isPlaying, isLoading, togglePlayPause, shuffle, toggleShuffle, next } =
     usePlayer();
   const [addingTrack, setAddingTrack] = useState<Track | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 2400);
+  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    },
+    []
+  );
 
   const playFromStart = useCallback(() => {
     if (!tracks.length) return;
@@ -73,8 +93,16 @@ export function MediaPage({
   }, [tracks, label, playTrack, shuffle, toggleShuffle]);
 
   const queueAll = useCallback(() => {
-    if (tracks.length) addToQueue(tracks);
-  }, [tracks, addToQueue]);
+    if (!tracks.length) return;
+    const inQueue = new Set(queue.map((t) => t.id));
+    const added = tracks.filter((t) => !inQueue.has(t.id)).length;
+    if (added === 0) {
+      showNotice('Already in your queue');
+      return;
+    }
+    addToQueue(tracks);
+    showNotice(`${added} ${added === 1 ? 'song' : 'songs'} added to queue`);
+  }, [tracks, queue, addToQueue, showNotice]);
 
   const onTrackPress = useCallback(
     (track: Track) => playTrack(track, { tracks, label }),
@@ -142,8 +170,18 @@ export function MediaPage({
           onPress={queueAll}
           disabled={disabled}
         >
-          <ListPlus color={COLORS.text.primary} size={20} />
+          <QueueAddIcon color={COLORS.text.primary} size={20} />
         </TouchableOpacity>
+        {canSaveToPlaylist && (
+          <TouchableOpacity
+            style={[styles.iconAction, disabled && styles.actionDisabled]}
+            activeOpacity={0.85}
+            onPress={() => setSavingAll(true)}
+            disabled={disabled}
+          >
+            <ListPlus color={COLORS.text.primary} size={20} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {extra}
@@ -186,6 +224,18 @@ export function MediaPage({
       </TouchableOpacity>
 
       <AddToPlaylistSheet track={addingTrack} onClose={() => setAddingTrack(null)} />
+      <SaveToPlaylistSheet
+        tracks={savingAll ? tracks : null}
+        defaultName={title}
+        onClose={() => setSavingAll(false)}
+        onSaved={showNotice}
+      />
+
+      {!!notice && (
+        <View pointerEvents="none" style={[styles.notice, { bottom: SIZES.bottomInset - 8 }]}>
+          <Text style={styles.noticeText}>{notice}</Text>
+        </View>
+      )}
 
       {currentTrack && (
         <MiniPlayer
@@ -263,6 +313,18 @@ const styles = StyleSheet.create({
     color: COLORS.text.primary,
     marginTop: SIZES.lg,
   },
+  notice: {
+    position: 'absolute',
+    alignSelf: 'center',
+    maxWidth: '88%',
+    backgroundColor: COLORS.surfaceRaised,
+    borderRadius: SIZES.radius.pill,
+    borderWidth: 1,
+    borderColor: COLORS.glassBorder,
+    paddingHorizontal: SIZES.md,
+    paddingVertical: SIZES.smd,
+  },
+  noticeText: { fontFamily: FONTS.medium, fontSize: 14, color: COLORS.text.primary, textAlign: 'center' },
   state: { alignItems: 'center', paddingVertical: SIZES.xl, paddingHorizontal: SIZES.lg },
   stateText: { fontFamily: FONTS.medium, fontSize: 14, color: COLORS.text.secondary, textAlign: 'center' },
   stateHint: { fontFamily: FONTS.regular, fontSize: 12, color: COLORS.text.muted, marginTop: SIZES.xs },
