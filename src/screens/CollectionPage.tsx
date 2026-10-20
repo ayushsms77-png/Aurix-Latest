@@ -35,11 +35,18 @@ export default function CollectionPageScreen() {
       .then((page) => {
         if (controller.signal.aborted) return;
         const art = params.imageUrl || page.playlist.coverImageUrl;
+        // Album rows carry no artist: use the album's ("Arijit Singh • 2023" -> "Arijit Singh").
+        const albumArtist =
+          params.kind === 'album' ? (params.subtitle ?? '').split(' • ')[0].trim() : '';
         // Album rows often come without their own artwork: use the album cover.
         setTracks(
           page.tracks.map((t) => ({
             ...t,
             albumImageUrl: t.albumImageUrl || art || '',
+            artist:
+              albumArtist && (!t.artist?.name || /^unknown artist$/i.test(t.artist.name))
+                ? { id: t.artist?.id ?? `yt-artist:${albumArtist}`, name: albumArtist }
+                : t.artist,
             album: t.album ?? (params.kind === 'album' ? params.title : undefined),
           }))
         );
@@ -67,6 +74,7 @@ export default function CollectionPageScreen() {
       imageUrl={cover}
       tracks={tracks}
       label={title}
+      canSaveToPlaylist
       loading={loading}
       error={error}
       onRetry={() => setAttempt((n) => n + 1)}

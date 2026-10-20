@@ -271,17 +271,18 @@ export default function HomeScreen() {
   const playFrom = (tracks: Track[], label: string) => (track: Track) =>
     playTrack(track, { tracks, label });
 
-  /** Album cards queue the whole album, not one synthetic row. */
+  /** Album cards open the album's own page (inside the Home stack). */
   const openAlbum = useCallback(
-    async (row: Track) => {
-      try {
-        const page = await MusicService.getAlbum(row.sourceId);
-        if (page.tracks.length) playTrack(page.tracks[0], { tracks: page.tracks, label: row.title });
-      } catch {
-        // Silent: a dead album simply won't play.
-      }
+    (row: Track) => {
+      (navigation as any).navigate('CollectionPage', {
+        kind: 'album',
+        browseId: row.sourceId,
+        title: row.title,
+        subtitle: row.artist.name,
+        imageUrl: row.albumImageUrl,
+      });
     },
-    [playTrack]
+    [navigation]
   );
 
   const dataFor = (s: SectionDef): Track[] => {

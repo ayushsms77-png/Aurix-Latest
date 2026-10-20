@@ -15,7 +15,6 @@ import { ChevronLeft, Music2, TriangleAlert, Wrench } from 'lucide-react-native'
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { COLORS, FONTS, SIZES } from '../constants/theme';
-import { GlassCard } from '../components/common/GlassCard';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { Playlist } from '../core/types';
 import { useLibrary } from '../hooks/useLibrary';
@@ -160,24 +159,21 @@ export default function SyncPlayScreen() {
           </TouchableOpacity>
         </View>
 
-        <GlassCard intensity={20} style={styles.card}>
+        <View style={styles.intro}>
           <Text style={styles.cardTitle}>Listen together, in sync</Text>
           <Text style={styles.cardLead}>
             Play the same playlist on up to {SYNC.MAX_MEMBERS} phones at once. Anyone in the room can
             play, pause, and skip songs.
           </Text>
-          {STEPS.map((s, i) => (
-            <View key={s.title} style={styles.step}>
-              <View style={styles.stepNum}>
-                <Text style={styles.stepNumText}>{i + 1}</Text>
-              </View>
-              <View style={styles.stepBody}>
-                <Text style={styles.stepTitle}>{s.title}</Text>
-                <Text style={styles.stepText}>{s.body}</Text>
-              </View>
+          {STEPS.map((st, i) => (
+            <View key={st.title} style={styles.step}>
+              <Text style={styles.stepTitle}>
+                {i + 1}. {st.title}
+              </Text>
+              <Text style={styles.stepText}>{st.body}</Text>
             </View>
           ))}
-        </GlassCard>
+        </View>
 
         {busy && (
           <TouchableOpacity style={styles.resume} onPress={openRoomScreen} activeOpacity={0.85}>
@@ -294,7 +290,7 @@ const styles = StyleSheet.create({
   },
   errorText: { flex: 1, fontFamily: FONTS.regular, fontSize: 13, color: COLORS.text.primary },
 
-  card: { padding: SIZES.md, marginBottom: SIZES.md },
+  intro: { marginBottom: SIZES.lg },
   cardTitle: { fontFamily: FONTS.bold, fontSize: 20, color: COLORS.text.primary },
   cardLead: {
     fontFamily: FONTS.regular,
@@ -304,19 +300,7 @@ const styles = StyleSheet.create({
     marginTop: SIZES.xs,
     marginBottom: SIZES.md,
   },
-  step: { flexDirection: 'row', marginBottom: SIZES.smd },
-  stepNum: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: COLORS.accent.greenGlow,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: SIZES.smd,
-    marginTop: 2,
-  },
-  stepNumText: { fontFamily: FONTS.bold, fontSize: 13, color: COLORS.accent.green },
-  stepBody: { flex: 1 },
+  step: { marginBottom: SIZES.smd },
   stepTitle: { fontFamily: FONTS.semibold, fontSize: 15, color: COLORS.text.primary },
   stepText: {
     fontFamily: FONTS.regular,
