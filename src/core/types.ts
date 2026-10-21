@@ -90,7 +90,7 @@ export type Playlist = {
   updatedAt: number;
 };
 
-export type SearchFilter = 'All' | 'Songs' | 'Artists' | 'Albums' | 'Playlists';
+export type SearchFilter = 'All' | 'Songs' | 'Artists' | 'Albums' | 'Playlists' | 'Videos';
 
 export type SearchResults = {
   query: string;
