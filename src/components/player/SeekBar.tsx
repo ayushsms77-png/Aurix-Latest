@@ -16,6 +16,8 @@ const formatTime = (seconds: number): string => {
 type SeekBarProps = {
   /** Commits a final position, in seconds. */
   onSeek: (seconds: number) => void;
+  /** Shows progress only: no dragging, no thumb (Video view). */
+  readOnly?: boolean;
 };
 
 /**
@@ -33,7 +35,7 @@ type SeekBarProps = {
  *
  * The time labels are plain text refreshed when the displayed second changes.
  */
-export const SeekBar: React.FC<SeekBarProps> = ({ onSeek }) => {
+export const SeekBar: React.FC<SeekBarProps> = ({ onSeek, readOnly }) => {
   const { duration: trackDuration } = usePlayer();
 
   const [barWidth, setBarWidth] = useState(0);
@@ -196,15 +198,17 @@ export const SeekBar: React.FC<SeekBarProps> = ({ onSeek }) => {
         style={styles.barBg}
         hitSlop={{ top: 20, bottom: 20, left: 0, right: 0 }}
         onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
-        {...panResponder.panHandlers}
+        {...(readOnly ? {} : panResponder.panHandlers)}
       >
         {/* The fill is clipped to the track; the thumb is not (it is taller than the track). */}
         <View style={styles.fillClip}>
           <Animated.View style={[styles.barFill, { transform: [{ translateX: fillX }] }]} />
         </View>
-        <Animated.View
-          style={[styles.dot, isSeeking && styles.dotActive, { transform: [{ translateX: dotX }] }]}
-        />
+        {!readOnly && (
+          <Animated.View
+            style={[styles.dot, isSeeking && styles.dotActive, { transform: [{ translateX: dotX }] }]}
+          />
+        )}
       </View>
 
       <View style={styles.timeRow}>
