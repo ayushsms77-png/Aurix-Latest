@@ -5,7 +5,7 @@ import { COLORS, FONTS, SIZES } from '../../constants/theme';
 import { Track } from '../../core/types';
 import { usePlayer } from '../../hooks/usePlayer';
 import { progressClock } from '../../playback/progressClock';
-import { VideoService } from '../../services/VideoService';
+import { describeFailure, VideoMatch, VideoService, VideoUnavailableError } from '../../services/VideoService';
 import { VIDEO, VIDEO_FAIL_TEXT, videoSyncDecision } from '../../video/videoLogic';
 import { LoadingLine } from './LoadingLine';
 
@@ -14,6 +14,8 @@ type Props = {
   /** Called after the failure message has been shown, so the screen can go back. */
   onFailed: () => void;
   topInset: number;
+  /** Which video was picked for this song (null while unknown), for the caption. */
+  onMatch?: (m: VideoMatch | null) => void;
 };
 
 type Phase = 'resolving' | 'ready' | 'failed';
@@ -24,9 +26,10 @@ type Phase = 'resolving' | 'ready' | 'failed';
  * screen and a red line sweeping left to right; if it can not be fetched the
  * message is shown and the screen returns to the normal player.
  */
-export function VideoLayer({ track, onFailed, topInset }: Props) {
+export function VideoLayer({ track, onFailed, topInset, onMatch }: Props) {
   const { isBuffering, isLoading } = usePlayer();
   const [phase, setPhase] = useState<Phase>('resolving');
+  const [reason, setReason] = useState('');
   const fade = useRef(new Animated.Value(0)).current;
   const offsetRef = useRef(0);
   const durationRef = useRef<number | undefined>(undefined);
@@ -51,15 +54,18 @@ export function VideoLayer({ track, onFailed, topInset }: Props) {
     readyRef.current = false;
     fade.setValue(0);
     setPhase('resolving');
+    setReason('');
+    onMatch?.(null);
     try {
       player.pause();
     } catch {
       /* player is being replaced */
     }
 
-    const fail = () => {
+    const fail = (why: string) => {
       if (cancelled) return;
       readyRef.current = false;
+      setReason(why);
       setPhase('failed');
     };
 
@@ -67,6 +73,7 @@ export function VideoLayer({ track, onFailed, topInset }: Props) {
       try {
         const prepared = await VideoService.prepare(track, controller.signal);
         if (cancelled) return;
+        onMatch?.(prepared.match);
         offsetRef.current = prepared.offsetS;
         durationRef.current = prepared.stream.durationS;
         await player.replaceAsync({ uri: prepared.stream.url, headers: prepared.stream.headers });
@@ -75,16 +82,20 @@ export function VideoLayer({ track, onFailed, topInset }: Props) {
         player.currentTime = Math.max(0, progressClock.now() + prepared.offsetS);
         lastSeekAt.current = Date.now();
         player.play();
-        frameTimer.current = setTimeout(fail, VIDEO.FIRST_FRAME_TIMEOUT_MS);
-      } catch {
-        fail();
+        frameTimer.current = setTimeout(
+          () => fail(`timeout: no picture after ${VIDEO.FIRST_FRAME_TIMEOUT_MS / 1000}s (stream loaded, player silent)`),
+          VIDEO.FIRST_FRAME_TIMEOUT_MS
+        );
+      } catch (e) {
+        // A load error from the player itself surfaces here too: say which step.
+        fail(e instanceof VideoUnavailableError ? describeFailure(e) : `player: ${describeFailure(e)}`);
       }
     })();
 
-    const statusSub = player.addListener('statusChange', (e: { status: string }) => {
+    const statusSub = player.addListener('statusChange', (e: { status: string; error?: { message?: string } }) => {
       if (e.status === 'error') {
         if (frameTimer.current) clearTimeout(frameTimer.current);
-        fail();
+        fail(`player: ${e.error?.message ?? 'playback error'}`.slice(0, 220));
       }
     });
 
@@ -171,6 +182,7 @@ export function VideoLayer({ track, onFailed, topInset }: Props) {
       {phase === 'failed' && (
         <View style={styles.failWrap}>
           <Text style={styles.failText}>{VIDEO_FAIL_TEXT}</Text>
+          {!!reason && <Text style={styles.reasonText}>{reason}</Text>}
         </View>
       )}
     </View>
@@ -190,6 +202,13 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.medium,
     fontSize: 16,
     color: COLORS.text.primary,
+    textAlign: 'center',
+  },
+  reasonText: {
+    marginTop: SIZES.sm,
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    color: COLORS.text.secondary,
     textAlign: 'center',
   },
 });
