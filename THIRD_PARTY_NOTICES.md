@@ -68,3 +68,15 @@ JavaScript dependencies declared in `package.json` are used unmodified under
 their own licenses, predominantly **MIT**. Their terms apply independently.
 Run `npm ls --all` for the resolved dependency tree, or consult each package's
 own `LICENSE` file under `node_modules/`.
+
+---
+
+## Video view
+
+- **expo-video** (© 650 Industries, Inc., MIT) plays the silent picture in the
+  full player's Video view.
+- **SponsorBlock** (https://sponsor.ajay.app) — the app asks its public API for
+  the "non-music" sections of a music video, to skip an intro. That data is
+  made by the SponsorBlock community and licensed
+  **CC BY-NC-SA 4.0** (https://creativecommons.org/licenses/by-nc-sa/4.0/):
+  attribution is required and it may not be used commercially.
