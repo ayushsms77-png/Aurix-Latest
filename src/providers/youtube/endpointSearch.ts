@@ -86,6 +86,7 @@ const INVIDIOUS_TYPE: Record<SearchFilter, string> = {
   Artists: 'channel',
   Albums: 'playlist',
   Playlists: 'playlist',
+  Videos: 'video',
 };
 
 const PIPED_FILTER: Record<SearchFilter, string> = {
@@ -94,6 +95,7 @@ const PIPED_FILTER: Record<SearchFilter, string> = {
   Artists: 'channels',
   Albums: 'music_albums',
   Playlists: 'playlists',
+  Videos: 'videos',
 };
 
 async function searchOne(

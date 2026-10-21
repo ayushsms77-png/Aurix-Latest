@@ -40,6 +40,7 @@ const PARAMS_FOR_FILTER: Record<SearchFilter, string | undefined> = {
   Artists: SEARCH_PARAMS.artists,
   Albums: SEARCH_PARAMS.albums,
   Playlists: SEARCH_PARAMS.playlists,
+  Videos: SEARCH_PARAMS.videos,
 };
 
 /** Candidates wanted from the related feed before filtering down to a few. */
