@@ -115,6 +115,15 @@ export function parseTrackItem(item: Any): Track | null {
     subtitleRuns.pop();
   } else {
     duration = parseDuration(fixedColumnText(item));
+    // Video results can put the length mid-subtitle ("Artist • 1.2M views • 4:25 • ..."): look for it.
+    if (!duration) {
+      const at = texts.findIndex((t) => isDurationText(t));
+      if (at > 0) {
+        duration = parseDuration(texts[at]);
+        texts.splice(at, 1);
+        subtitleRuns.splice(at, 1);
+      }
+    }
   }
 
   // Podcast episodes are not music: without this the label "Episode" was
