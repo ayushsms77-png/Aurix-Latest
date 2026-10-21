@@ -58,3 +58,27 @@ export type NativeStreamFailure = {
  * of these, so an extraction failure cannot take down the RN runtime.
  */
 export type NativeStreamResult = NativeStreamSuccess | NativeStreamFailure;
+
+export type NativeVideoFailureReason = NativeStreamFailureReason | 'no_video_stream';
+
+export type NativeVideoSuccess = {
+  ok: true;
+  /** Direct progressive video-only URL (no sound). Never log this outside __DEV__. */
+  url: string;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  extractor?: string;
+  /** User-Agent the URL was extracted with; the player must reuse it. */
+  userAgent?: string;
+};
+
+export type NativeVideoFailure = {
+  ok: false;
+  reason: NativeVideoFailureReason;
+  message: string;
+  exception?: string | null;
+};
+
+export type NativeVideoResult = NativeVideoSuccess | NativeVideoFailure;

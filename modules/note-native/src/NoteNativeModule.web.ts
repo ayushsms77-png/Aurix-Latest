@@ -1,6 +1,6 @@
 import { registerWebModule, NativeModule } from 'expo';
 
-import { NativeStreamResult, PlatformInfo } from './NoteNative.types';
+import { NativeStreamResult, NativeVideoResult, PlatformInfo } from './NoteNative.types';
 
 class NoteNativeModule extends NativeModule<{}> {
   getPlatformInfo(): PlatformInfo {
@@ -13,6 +13,14 @@ class NoteNativeModule extends NativeModule<{}> {
       ok: false,
       reason: 'module_unavailable',
       message: 'Native stream resolution is not available on web',
+    };
+  }
+
+  async resolveYouTubeVideo(): Promise<NativeVideoResult> {
+    return {
+      ok: false,
+      reason: 'module_unavailable',
+      message: 'Native video resolution is not available on web',
     };
   }
 }
