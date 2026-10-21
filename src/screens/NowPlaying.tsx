@@ -33,7 +33,12 @@ import { SeekBar } from '../components/player/SeekBar';
 import { LyricsView } from '../components/player/LyricsView';
 import { LyricsHeader } from '../components/player/LyricsHeader';
 import { AddToPlaylistSheet } from '../components/lists/AddToPlaylistSheet';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Track } from '../core/types';
+import { VideoLayer } from '../components/player/VideoLayer';
+import { PlayOutlineIcon } from '../components/icons/PlayOutlineIcon';
+import { VideoService } from '../services/VideoService';
+import { syncBridge } from '../sync/syncBridge';
 import { usePlayer } from '../hooks/usePlayer';
 import { useLibrary } from '../hooks/useLibrary';
 import { DownloadService } from '../services/DownloadService';
@@ -68,7 +73,19 @@ export default function NowPlayingScreen() {
   } = usePlayer();
 
   const { isLiked, toggleLike } = useLibrary();
-  const [view, setView] = useState<'player' | 'lyrics'>('player');
+  const [view, setView] = useState<'player' | 'lyrics' | 'video'>('player');
+  // Video can be switched off remotely (flag `video_play`); on by default.
+  const [videoEnabled, setVideoEnabled] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    void VideoService.isEnabled().then((on) => {
+      if (alive) setVideoEnabled(on);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const leaveVideo = useCallback(() => setView('player'), []);
   const [showQueue, setShowQueue] = useState(false);
   /** Track whose "add to playlist" sheet is open. */
   const [addingTrack, setAddingTrack] = useState<Track | null>(null);
@@ -122,7 +139,31 @@ export default function NowPlayingScreen() {
   return (
     <View style={styles.container}>
       {/* Dynamic per-album colour background (Apple-style) */}
-      <ArtworkBackground uri={currentTrack.albumImageUrl} />
+      {view === 'video' ? (
+        <>
+          <VideoLayer
+            key={currentTrack.id}
+            track={currentTrack}
+            onFailed={leaveVideo}
+            topInset={insets.top}
+          />
+          {/* Soft top shade so the header stays readable, and the black gradient
+              that carries the title and controls at the bottom. */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0.5)', 'rgba(0,0,0,0)']}
+            style={styles.videoTopShade}
+          />
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.9)']}
+            locations={[0, 0.42, 1]}
+            style={styles.videoBottomShade}
+          />
+        </>
+      ) : (
+        <ArtworkBackground uri={currentTrack.albumImageUrl} />
+      )}
 
       <View style={[styles.content, { paddingTop: insets.top + SIZES.xl, paddingBottom: insets.bottom + SIZES.md }]}>
 
@@ -165,13 +206,32 @@ export default function NowPlayingScreen() {
               </TouchableOpacity>
             </View>
           </>
+        ) : view === 'video' ? (
+          <>
+            {/* The picture is the screen behind; this just pushes the info to the bottom. */}
+            <View style={styles.videoSpacer} />
+
+            <View style={styles.infoContainer}>
+              <View style={styles.textInfo}>
+                <Text style={styles.trackTitle} numberOfLines={1}>{currentTrack.title}</Text>
+                <Text style={styles.trackArtist} numberOfLines={1}>{currentTrack.artist.name}</Text>
+              </View>
+              <TouchableOpacity onPress={() => toggleLike(currentTrack)}>
+                <Heart
+                  color={liked ? COLORS.accent.green : COLORS.text.primary}
+                  fill={liked ? COLORS.accent.green : 'transparent'}
+                  size={28}
+                />
+              </TouchableOpacity>
+            </View>
+          </>
         ) : (
           <View style={styles.lyricsWrap}>
             <LyricsView track={currentTrack} duration={duration} onSeek={seekTo} />
           </View>
         )}
 
-        <SeekBar onSeek={seekTo} />
+        <SeekBar onSeek={seekTo} readOnly={view === 'video'} />
 
         {/* Error state -- never leaves the player stuck */}
         {error && (
@@ -219,6 +279,20 @@ export default function NowPlayingScreen() {
 
         {/* Secondary row — Lyrics / Queue / Download */}
         <View style={styles.bottomActions}>
+          {videoEnabled && !syncBridge.active && (
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => setView((v) => (v === 'video' ? 'player' : 'video'))}
+            >
+              <PlayOutlineIcon
+                color={view === 'video' ? COLORS.accent.green : COLORS.text.secondary}
+                size={20}
+              />
+              <Text style={[styles.secondaryLabel, view === 'video' && styles.secondaryLabelActive]}>
+                Video
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.secondaryButton}
             onPress={() => setView((v) => (v === 'lyrics' ? 'player' : 'lyrics'))}
@@ -277,6 +351,9 @@ export default function NowPlayingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
+  videoSpacer: { flex: 1 },
+  videoTopShade: { position: 'absolute', top: 0, left: 0, right: 0, height: '16%' },
+  videoBottomShade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '52%' },
   content: { flex: 1, paddingHorizontal: SIZES.lg, justifyContent: 'space-between' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SIZES.lg },
   headerIcon: { padding: SIZES.xs },
