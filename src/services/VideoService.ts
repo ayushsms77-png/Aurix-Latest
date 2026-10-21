@@ -4,8 +4,9 @@ import { fetchAppFlag } from '../sync/syncServer';
 import { MusicService } from './MusicService';
 import {
   decideOffset,
+  describeRejects,
   parseSegments,
-  rankCandidates,
+  rankWithReport,
   Segment,
   VIDEO,
   VideoCandidate,
@@ -22,6 +23,19 @@ export type VideoPlan = {
   videoId: string;
   /** Seconds into the video at which the song starts (an intro to skip). */
   offsetS: number;
+  /** What was picked, for the caption under the picture. */
+  match: VideoMatch;
+};
+
+export type VideoMatch = {
+  title: string;
+  channel: string;
+  /** Video length minus song length, in seconds. */
+  deltaS: number;
+  /** Length did not line up exactly: the picture may be a little out of step. */
+  approx: boolean;
+  /** The song was itself a video. */
+  self: boolean;
 };
 
 export type VideoStream = {
@@ -30,11 +44,23 @@ export type VideoStream = {
   durationS?: number;
 };
 
+/** Which step broke. Shown on screen so a failure can be traced. */
+export type VideoFailStep = 'search' | 'match' | 'stream' | 'player' | 'timeout' | 'cancelled';
+
 export class VideoUnavailableError extends Error {
-  constructor(message = 'No video for this song') {
+  readonly step: VideoFailStep;
+  constructor(step: VideoFailStep, message = 'No video for this song') {
     super(message);
     this.name = 'VideoUnavailableError';
+    this.step = step;
   }
+}
+
+/** One short line for the failure screen, e.g. "match: 12 results (title 7, length 3)". */
+export function describeFailure(e: unknown): string {
+  if (e instanceof VideoUnavailableError) return `${e.step}: ${e.message}`.slice(0, 220);
+  const msg = e instanceof Error ? e.message : String(e);
+  return `error: ${msg}`.slice(0, 220);
 }
 
 const PLAN_TTL_MS = 30 * 60 * 1000;
@@ -42,7 +68,7 @@ const FAIL_TTL_MS = 2 * 60 * 1000;
 const STREAM_TTL_MS = 20 * 60 * 1000;
 const FLAG_TTL_MS = 10 * 60 * 1000;
 
-const plans = new Map<string, { at: number; plan: VideoPlan | null }>();
+const plans = new Map<string, { at: number; plan: VideoPlan | null; err?: VideoUnavailableError }>();
 const streams = new Map<string, { at: number; stream: VideoStream }>();
 let flagCache: { at: number; enabled: boolean } | null = null;
 
@@ -100,43 +126,84 @@ export const VideoService = {
     const hit = plans.get(track.id);
     if (hit && Date.now() - hit.at < (hit.plan ? PLAN_TTL_MS : FAIL_TTL_MS)) {
       if (hit.plan) return hit.plan;
-      throw new VideoUnavailableError();
+      throw hit.err ?? new VideoUnavailableError('match');
     }
+    const fail = (err: VideoUnavailableError): never => {
+      plans.set(track.id, { at: Date.now(), plan: null, err });
+      throw err;
+    };
 
     // The song is itself a video: that is the picture, in step by definition.
     if (track.isVideo === true) {
-      const plan = { videoId: track.sourceId, offsetS: 0 };
+      const plan: VideoPlan = {
+        videoId: track.sourceId,
+        offsetS: 0,
+        match: { title: track.title, channel: track.artist.name, deltaS: 0, approx: false, self: true },
+      };
       plans.set(track.id, { at: Date.now(), plan });
       return plan;
     }
 
     const artist = track.artist.name.split(/,|&/)[0].trim();
-    let results: Track[] = [];
-    try {
-      const res = await MusicService.search(`${track.title} ${artist} official video`, { limit: 15, signal });
-      results = res.tracks;
-    } catch {
-      if (signal?.aborted) throw new VideoUnavailableError('cancelled');
+    const base = `${track.title} ${artist}`;
+    // Two searches side by side: videos only (real music videos), and a plain one
+    // ("official video") as a second chance. Whatever either finds goes in one pool.
+    const settled = await Promise.allSettled([
+      MusicService.search(base, { filter: 'Videos', limit: 15, signal }),
+      MusicService.search(`${base} official video`, { limit: 15, signal }),
+    ]);
+    if (signal?.aborted) throw new VideoUnavailableError('cancelled', 'cancelled');
+
+    const pool: Track[] = [];
+    const seen = new Set<string>();
+    const errors: string[] = [];
+    for (const r of settled) {
+      if (r.status === 'rejected') {
+        errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+        continue;
+      }
+      for (const t of r.value.tracks) {
+        if (t.sourceId && !seen.has(t.sourceId)) {
+          seen.add(t.sourceId);
+          pool.push(t);
+        }
+      }
+    }
+    if (pool.length === 0) {
+      fail(new VideoUnavailableError('search', errors.length ? errors[0].slice(0, 120) : '0 results'));
     }
 
-    const ranked = rankCandidates(
+    const report = rankWithReport(
       { title: track.title, artist: track.artist.name, duration: track.duration },
-      results.map(toCandidate)
+      pool.map(toCandidate)
     );
+    if (report.ranked.length === 0) {
+      fail(new VideoUnavailableError('match', describeRejects(report.total, report.rejected)));
+    }
 
-    for (const r of ranked) {
-      if (signal?.aborted) throw new VideoUnavailableError('cancelled');
-      const segments = Math.abs(r.delta) > VIDEO.SAME_LENGTH_S ? await fetchSegments(r.cand.sourceId) : null;
+    // Best first. Only a candidate that is not the same length needs SponsorBlock.
+    for (const r of report.ranked) {
+      if (signal?.aborted) throw new VideoUnavailableError('cancelled', 'cancelled');
+      const segments = r.delta > VIDEO.SAME_LENGTH_S ? await fetchSegments(r.cand.sourceId) : null;
       const decision = decideOffset(r.delta, segments);
       if (decision.ok) {
-        const plan = { videoId: r.cand.sourceId, offsetS: decision.offsetS };
+        const plan: VideoPlan = {
+          videoId: r.cand.sourceId,
+          offsetS: decision.offsetS,
+          match: {
+            title: r.cand.title,
+            channel: r.cand.artist,
+            deltaS: Math.round(r.delta),
+            approx: decision.approx,
+            self: false,
+          },
+        };
         plans.set(track.id, { at: Date.now(), plan });
         return plan;
       }
     }
 
-    plans.set(track.id, { at: Date.now(), plan: null });
-    throw new VideoUnavailableError();
+    return fail(new VideoUnavailableError('match', `${report.ranked.length} candidates, none usable by length`));
   },
 
   /** A playable silent stream for a video id. */
@@ -145,8 +212,8 @@ export const VideoService = {
     if (hit && Date.now() - hit.at < STREAM_TTL_MS) return hit.stream;
 
     const r = await resolveYouTubeVideo(videoId, VIDEO.MAX_HEIGHT);
-    if (signal?.aborted) throw new VideoUnavailableError('cancelled');
-    if (!r.ok) throw new VideoUnavailableError(r.message);
+    if (signal?.aborted) throw new VideoUnavailableError('cancelled', 'cancelled');
+    if (!r.ok) throw new VideoUnavailableError('stream', `${r.reason}${r.message ? ` - ${r.message}` : ''}`.slice(0, 160));
 
     const stream: VideoStream = {
       url: r.url,
