@@ -62,22 +62,34 @@ const MAINTENANCE = 'Sync Play is under maintenance right now. Please try again 
 
 /** Is Sync Play switched on? Any failure counts as "not available". */
 export async function fetchSyncFlag(): Promise<FlagResult> {
+  const r = await fetchAppFlag('sync_play');
+  if (!r.ok) return { ok: false, message: r.message === 'unconfigured' ? 'Sync Play is not set up in this build.' : UNREACHABLE };
+  const message = r.message || MAINTENANCE;
+  return { ok: true, enabled: r.enabled, message: r.enabled ? '' : message };
+}
+
+/**
+ * Read one row of `app_flags`. `ok: false` means the flag could not be read
+ * (not configured / offline); the caller decides whether that means on or off.
+ */
+export async function fetchAppFlag(
+  key: string
+): Promise<{ ok: true; found: boolean; enabled: boolean; message: string } | { ok: false; message: string }> {
   const cfg = syncConfig();
-  if (!cfg) return { ok: false, message: 'Sync Play is not set up in this build.' };
+  if (!cfg) return { ok: false, message: 'unconfigured' };
   try {
     const r = await fetchJson(
-      `${cfg.url}/rest/v1/app_flags?select=enabled,message&key=eq.sync_play`,
+      `${cfg.url}/rest/v1/app_flags?select=enabled,message&key=eq.${encodeURIComponent(key)}`,
       { method: 'GET', headers: headers(cfg.key) },
       8000
     );
-    if (!r.ok || !Array.isArray(r.body)) return { ok: false, message: UNREACHABLE };
+    if (!r.ok || !Array.isArray(r.body)) return { ok: false, message: 'unreachable' };
     const row = r.body[0] as { enabled?: unknown; message?: unknown } | undefined;
     const enabled = row?.enabled === true;
-    const message =
-      typeof row?.message === 'string' && row.message.trim() ? row.message.trim() : MAINTENANCE;
-    return { ok: true, enabled, message: enabled ? '' : message };
+    const message = typeof row?.message === 'string' ? row.message.trim() : '';
+    return { ok: true, found: !!row, enabled, message };
   } catch {
-    return { ok: false, message: UNREACHABLE };
+    return { ok: false, message: 'unreachable' };
   }
 }
 
