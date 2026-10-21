@@ -45,7 +45,7 @@ export function normalizeTitle(raw: string): string {
  * Words that mean "not the real music video": such a result is dropped, unless
  * the song's own title has the word (e.g. "Live Forever").
  */
-const REJECT_WORDS = [
+const REJECT_WORDS: string[] = [
   'remix',
   'cover',
   'karaoke',
@@ -64,8 +64,8 @@ const REJECT_WORDS = [
   'unplugged',
 ];
 
-/** Words that only lower the rank (a lyric video is still a video, and may be all there is). */
-const SOFT_WORDS = ['lyric', 'lyrics', 'audio', 'visualizer', 'visualiser', 'status', 'whatsapp'];
+// Lyric / audio-only / visualizer uploads are NOT the music video: also dropped.
+REJECT_WORDS.push('lyric', 'lyrics', 'audio', 'visualizer', 'visualiser', 'status', 'whatsapp', 'topic');
 
 function hasWord(text: string, w: string): boolean {
   return new RegExp(`\\b${w}\\b`, 'i').test(text);
@@ -103,7 +103,8 @@ function titleWords(t: string): string[] {
 export function evaluateCandidate(song: SongInfo, cand: VideoCandidate): ScoreResult {
   // `undefined` is fine: search results often do not say. Only a known audio track is out.
   if (cand.isVideo === false) return { reject: 'audio_only' };
-  if (!cand.duration || !song.duration) return { reject: 'no_duration' };
+  // A candidate with no length is kept (its real length is read from the stream later).
+  if (!song.duration) return { reject: 'no_duration' };
 
   const songTitle = normalizeTitle(song.title);
   const candTitle = normalizeTitle(cand.title);
@@ -131,16 +132,16 @@ export function evaluateCandidate(song: SongInfo, cand: VideoCandidate): ScoreRe
   }
 
   let score = 100;
-  for (const w of SOFT_WORDS) {
-    if (hasWord(rawCand, w) && !hasWord(rawSong, w) && !songWords.has(w)) score -= 40;
-  }
   if (/official/.test(rawCand)) score += 10;
   if (/\bvideo\b|\bmv\b|music video/.test(rawCand)) score += 5;
   if (cand.isVideo === true) score += 5;
   // Extra words beyond the song title (and artist) hint at a different video.
   score -= Math.min(15, Math.max(0, candWords.size - songWords.size - 3) * 2);
+  // The uploader is the artist: the real thing, not a fan upload.
+  if (artist && candArtist.includes(artist)) score += 15;
   // Closer in length is better: it is the strongest sign of the same recording.
-  score -= Math.min(25, Math.abs(cand.duration - song.duration) / 4);
+  if (cand.duration) score -= Math.min(25, Math.abs(cand.duration - song.duration) / 4);
+  else score -= 10; // length unknown
   return { score };
 }
 
@@ -150,7 +151,8 @@ export function scoreCandidate(song: SongInfo, cand: VideoCandidate): number | n
   return 'score' in r ? r.score : null;
 }
 
-export type RankedCandidate = { cand: VideoCandidate; delta: number; score: number };
+/** delta = video length - song length; null while the video's length is not known yet. */
+export type RankedCandidate = { cand: VideoCandidate; delta: number | null; score: number };
 
 export type RankReport = {
   ranked: RankedCandidate[];
@@ -175,6 +177,10 @@ export function rankWithReport(song: SongInfo, cands: VideoCandidate[], limit = 
     }
     if (r.score < 30) {
       bump('low_score');
+      continue;
+    }
+    if (!cand.duration) {
+      out.push({ cand, delta: null, score: r.score });
       continue;
     }
     const delta = cand.duration - song.duration;
