@@ -1,5 +1,5 @@
 import NoteNativeModule from './src/NoteNativeModule';
-import { NativeStreamResult, PlatformInfo } from './src/NoteNative.types';
+import { NativeStreamResult, NativeVideoResult, PlatformInfo } from './src/NoteNative.types';
 
 export * from './src/NoteNative.types';
 export { default as NoteNativeModule } from './src/NoteNativeModule';
@@ -41,6 +41,37 @@ export async function resolveYouTubeStream(
   } catch (e) {
     // A bridge-level failure (rather than an extraction failure) still has to
     // arrive as data, not as a thrown error.
+    return {
+      ok: false,
+      reason: 'unknown',
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
+ * Resolve a YouTube video id to a progressive, video-only (silent) stream, up
+ * to `maxHeight` pixels tall. Never throws; failures come back as data.
+ *
+ * A binary built before this function existed has no `resolveYouTubeVideo`,
+ * which is reported as `module_unavailable` instead of crashing.
+ */
+export async function resolveYouTubeVideo(
+  videoId: string,
+  maxHeight = 720
+): Promise<NativeVideoResult> {
+  const module = NoteNativeModule;
+  if (!module || typeof module.resolveYouTubeVideo !== 'function') {
+    return {
+      ok: false,
+      reason: 'module_unavailable',
+      message: 'Video is not available in this build',
+    };
+  }
+
+  try {
+    return await module.resolveYouTubeVideo(videoId, maxHeight);
+  } catch (e) {
     return {
       ok: false,
       reason: 'unknown',
