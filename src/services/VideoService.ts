@@ -181,11 +181,33 @@ export const VideoService = {
       fail(new VideoUnavailableError('match', describeRejects(report.total, report.rejected)));
     }
 
-    // Best first. Only a candidate that is not the same length needs SponsorBlock.
+    // Best first. A candidate whose length the search did not give is measured from
+    // its real stream (at most a few, since each one costs a lookup).
+    let lookups = 0;
+    let lastNote = '';
     for (const r of report.ranked) {
       if (signal?.aborted) throw new VideoUnavailableError('cancelled', 'cancelled');
-      const segments = r.delta > VIDEO.SAME_LENGTH_S ? await fetchSegments(r.cand.sourceId) : null;
-      const decision = decideOffset(r.delta, segments);
+      let delta = r.delta;
+      if (delta === null) {
+        if (lookups >= 3) continue;
+        lookups++;
+        try {
+          const st = await VideoService.streamFor(r.cand.sourceId, signal);
+          if (!st.durationS) {
+            lastNote = 'stream gave no length';
+            continue;
+          }
+          delta = st.durationS - track.duration;
+        } catch (e) {
+          if (e instanceof VideoUnavailableError && e.step === 'cancelled') throw e;
+          lastNote = e instanceof Error ? e.message : 'stream failed';
+          // The extractor itself is missing or broken: no point trying more.
+          if (/module_unavailable/.test(lastNote)) fail(e as VideoUnavailableError);
+          continue;
+        }
+      }
+      const segments = delta > VIDEO.SAME_LENGTH_S ? await fetchSegments(r.cand.sourceId) : null;
+      const decision = decideOffset(delta, segments);
       if (decision.ok) {
         const plan: VideoPlan = {
           videoId: r.cand.sourceId,
@@ -193,7 +215,7 @@ export const VideoService = {
           match: {
             title: r.cand.title,
             channel: r.cand.artist,
-            deltaS: Math.round(r.delta),
+            deltaS: Math.round(delta),
             approx: decision.approx,
             self: false,
           },
@@ -203,7 +225,7 @@ export const VideoService = {
       }
     }
 
-    return fail(new VideoUnavailableError('match', `${report.ranked.length} candidates, none usable by length`));
+    return fail(new VideoUnavailableError('match', `${report.ranked.length} candidates, none usable by length${lastNote ? ` (${lastNote})` : ''}`));
   },
 
   /** A playable silent stream for a video id. */
