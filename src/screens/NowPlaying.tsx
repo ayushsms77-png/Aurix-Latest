@@ -37,7 +37,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Track } from '../core/types';
 import { VideoLayer } from '../components/player/VideoLayer';
 import { PlayOutlineIcon } from '../components/icons/PlayOutlineIcon';
-import { VideoService } from '../services/VideoService';
+import { VideoMatch, VideoService } from '../services/VideoService';
 import { syncBridge } from '../sync/syncBridge';
 import { usePlayer } from '../hooks/usePlayer';
 import { useLibrary } from '../hooks/useLibrary';
@@ -86,6 +86,8 @@ export default function NowPlayingScreen() {
     };
   }, []);
   const leaveVideo = useCallback(() => setView('player'), []);
+  /** The video picked for this song, shown as a caption at the bottom of the video view. */
+  const [videoMatch, setVideoMatch] = useState<VideoMatch | null>(null);
   const [showQueue, setShowQueue] = useState(false);
   /** Track whose "add to playlist" sheet is open. */
   const [addingTrack, setAddingTrack] = useState<Track | null>(null);
@@ -145,6 +147,7 @@ export default function NowPlayingScreen() {
             key={currentTrack.id}
             track={currentTrack}
             onFailed={leaveVideo}
+            onMatch={setVideoMatch}
             topInset={insets.top}
           />
           {/* Soft top shade so the header stays readable, and the black gradient
@@ -224,6 +227,15 @@ export default function NowPlayingScreen() {
                 />
               </TouchableOpacity>
             </View>
+
+            {videoMatch && (
+              <Text style={styles.videoCaption} numberOfLines={2}>
+                {videoMatch.self ? 'Video: this song' : `Video: ${videoMatch.title} · ${videoMatch.channel}`}
+                {videoMatch.approx
+                  ? ` · ${Math.abs(videoMatch.deltaS)}s ${videoMatch.deltaS > 0 ? 'longer' : 'shorter'}, may be slightly off`
+                  : ''}
+              </Text>
+            )}
           </>
         ) : (
           <View style={styles.lyricsWrap}>
@@ -289,7 +301,7 @@ export default function NowPlayingScreen() {
                 size={20}
               />
               <Text style={[styles.secondaryLabel, view === 'video' && styles.secondaryLabelActive]}>
-                Video
+                Play
               </Text>
             </TouchableOpacity>
           )}
@@ -352,6 +364,7 @@ export default function NowPlayingScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   videoSpacer: { flex: 1 },
+  videoCaption: { fontFamily: FONTS.regular, fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: SIZES.xs, marginBottom: SIZES.xs },
   videoTopShade: { position: 'absolute', top: 0, left: 0, right: 0, height: '16%' },
   videoBottomShade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '52%' },
   content: { flex: 1, paddingHorizontal: SIZES.lg, justifyContent: 'space-between' },
