@@ -3,6 +3,7 @@ package expo.modules.notenative
 import android.os.Build
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.exceptions.AccountTerminatedException
@@ -22,6 +23,7 @@ import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamType
+import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.IOException
 
 /**
@@ -60,6 +62,12 @@ class NoteNativeModule : Module() {
     // performs several blocking network round-trips.
     AsyncFunction("resolveYouTubeStream") { videoId: String ->
       resolveYouTubeStream(videoId)
+    }
+
+    // Video-only stream for the Video view. The audio keeps coming from
+    // resolveYouTubeStream; this picture is played muted next to it.
+    AsyncFunction("resolveYouTubeVideo") { videoId: String, maxHeight: Int ->
+      resolveYouTubeVideo(videoId, maxHeight)
     }
   }
 
@@ -119,6 +127,61 @@ class NoteNativeModule : Module() {
     } catch (e: Throwable) {
       classify(e)
     }
+  }
+
+  private fun resolveYouTubeVideo(videoId: String, maxHeight: Int): Map<String, Any?> {
+    if (videoId.isBlank()) {
+      return failure("invalid_id", "No video id supplied")
+    }
+
+    return try {
+      ensureInitialized()
+
+      val url = "https://www.youtube.com/watch?v=$videoId"
+      val info = StreamInfo.getInfo(ServiceList.YouTube, url)
+
+      when (info.streamType) {
+        StreamType.LIVE_STREAM,
+        StreamType.AUDIO_LIVE_STREAM ->
+          return failure("live_stream", "Live streams are not supported yet")
+        StreamType.NONE ->
+          return failure("unsupported", "No playable stream for this item")
+        else -> Unit
+      }
+
+      val best = bestVideoOnly(info.videoOnlyStreams, maxHeight)
+        ?: return failure("no_video_stream", "No suitable video stream available")
+
+      mapOf(
+        "ok" to true,
+        "url" to best.content,
+        "mimeType" to best.format?.mimeType,
+        "width" to best.width,
+        "height" to best.height,
+        "durationSeconds" to info.duration,
+        "extractor" to "NewPipeExtractor/v0.26.5",
+        "userAgent" to NoteNativeDownloader.USER_AGENT
+      )
+    } catch (e: Throwable) {
+      classify(e)
+    }
+  }
+
+  /**
+   * The tallest progressive MP4 video-only stream up to maxHeight. H.264
+   * (avc1) is preferred because every phone can decode it; other MP4 codecs
+   * (AV1) are only used when no H.264 stream exists.
+   */
+  private fun bestVideoOnly(streams: List<VideoStream>?, maxHeight: Int): VideoStream? {
+    val usable = streams
+      ?.filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+      ?.filter { it.isUrl && !it.content.isNullOrBlank() }
+      ?.filter { it.format == MediaFormat.MPEG_4 }
+      ?.filter { it.height in 1..maxHeight }
+      ?: return null
+    val h264 = usable.filter { it.codec?.startsWith("avc1") == true }
+    val pool = if (h264.isNotEmpty()) h264 else usable
+    return pool.maxWithOrNull(compareBy<VideoStream> { it.height }.thenBy { it.bitrate })
   }
 
   /**
