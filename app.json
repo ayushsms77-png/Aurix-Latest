@@ -3,6 +3,12 @@
     "name": "Aurix",
     "slug": "NOTE",
     "version": "17.7.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/65a8b803-c802-43fc-b6a0-b2ea958ae534"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

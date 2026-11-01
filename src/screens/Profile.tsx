@@ -26,6 +26,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -54,6 +55,10 @@ const IG_URL = 'https://www.instagram.com/vivac_ayu';
 // Update these two lines manually at release time.
 const APP_VERSION = '17.7.0';
 const APP_BUILD = '069';
+// OTA (EAS Update) info. updateId is null on the APK's embedded bundle, so show 'Embedded'.
+const UPDATE_ID = Updates.updateId ? Updates.updateId.slice(0, 8) : 'Embedded';
+const UPDATE_CHANNEL = Updates.channel || 'none';
+const RUNTIME_VERSION = Updates.runtimeVersion ? Updates.runtimeVersion.slice(0, 8) : 'n/a';
 
 // Real installed versions, read from package.json / the native gradle file at
 // the time this was written -- NewPipe Extractor's version is never guessed;
@@ -316,6 +321,10 @@ export default function ProfileScreen() {
             <Text style={styles.aboutLabel}>Build</Text>
             <Text style={styles.aboutValue}>{APP_BUILD}</Text>
           </View>
+          <View style={[styles.aboutRow, styles.aboutDivider]}>
+            <Text style={styles.aboutLabel}>Update</Text>
+            <Text style={styles.aboutValue}>{UPDATE_ID}</Text>
+          </View>
           <ListRow label="Source code" onPress={() => open(REPO_URL)} showDivider={false} />
         </View>
 
@@ -393,6 +402,14 @@ export default function ProfileScreen() {
               <View style={styles.infoLine}>
                 <Text style={styles.infoKey}>App version</Text>
                 <Text style={styles.infoValue}>{APP_VERSION} ({APP_BUILD})</Text>
+              </View>
+              <View style={styles.infoLine}>
+                <Text style={styles.infoKey}>Channel</Text>
+                <Text style={styles.infoValue}>{UPDATE_CHANNEL}</Text>
+              </View>
+              <View style={styles.infoLine}>
+                <Text style={styles.infoKey}>Runtime</Text>
+                <Text style={styles.infoValue}>{RUNTIME_VERSION}</Text>
               </View>
               <View style={styles.infoLine}>
                 <Text style={styles.infoKey}>JS engine</Text>
