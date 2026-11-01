@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Image,
@@ -8,11 +8,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Play, Shuffle, ListPlus, Heart } from 'lucide-react-native';
+import { ChevronLeft, Play, Shuffle, Heart } from 'lucide-react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { COLORS, SIZES, FONTS } from '../constants/theme';
 import { TrackRow } from '../components/lists/TrackRow';
 import { AddToPlaylistSheet } from '../components/lists/AddToPlaylistSheet';
+import { QueueAddIcon } from '../components/icons/QueueAddIcon';
 import { MiniPlayer } from '../components/player/MiniPlayer';
 import { GlassCard } from '../components/common/GlassCard';
 import { Track } from '../core/types';
@@ -39,6 +40,7 @@ export default function PlaylistDetailScreen() {
   const {
     playTrack,
     addToQueue,
+    queue,
     currentTrack,
     isPlaying,
     isLoading,
@@ -50,6 +52,21 @@ export default function PlaylistDetailScreen() {
 
   /** Track whose "add to playlist" sheet is open. */
   const [addingTrack, setAddingTrack] = useState<Track | null>(null);
+
+  /** Short confirmation shown at the bottom ("3 songs added to queue"). */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 2400);
+  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    },
+    []
+  );
 
   const playlist = useMemo(
     () => (playlistId === 'liked' ? likedPlaylist : playlists.find((p) => p.id === playlistId)),
@@ -73,8 +90,16 @@ export default function PlaylistDetailScreen() {
   }, [tracks, playlist, playTrack, shuffle, toggleShuffle]);
 
   const queueAll = useCallback(() => {
-    if (tracks.length) addToQueue(tracks);
-  }, [tracks, addToQueue]);
+    if (!tracks.length) return;
+    const inQueue = new Set(queue.map((t) => t.id));
+    const added = tracks.filter((t) => !inQueue.has(t.id)).length;
+    if (added === 0) {
+      showNotice('Already in your queue');
+      return;
+    }
+    addToQueue(tracks);
+    showNotice(`${added} ${added === 1 ? 'song' : 'songs'} added to queue`);
+  }, [tracks, queue, addToQueue, showNotice]);
 
   /** One stable callback for every row in this playlist. */
   const onTrackPress = useCallback(
@@ -170,7 +195,7 @@ export default function PlaylistDetailScreen() {
           onPress={queueAll}
           disabled={!tracks.length}
         >
-          <ListPlus color={COLORS.text.primary} size={20} />
+          <QueueAddIcon color={COLORS.text.primary} size={20} />
         </TouchableOpacity>
       </View>
     </View>
@@ -216,6 +241,12 @@ export default function PlaylistDetailScreen() {
 
       <AddToPlaylistSheet track={addingTrack} onClose={() => setAddingTrack(null)} />
 
+      {!!notice && (
+        <View pointerEvents="none" style={[styles.notice, { bottom: SIZES.bottomInset - 8 }]}>
+          <Text style={styles.noticeText}>{notice}</Text>
+        </View>
+      )}
+
       {currentTrack && (
         <MiniPlayer
           track={currentTrack}
@@ -231,6 +262,18 @@ export default function PlaylistDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  notice: {
+    position: 'absolute',
+    alignSelf: 'center',
+    maxWidth: '88%',
+    backgroundColor: COLORS.surfaceRaised,
+    borderRadius: SIZES.radius.pill,
+    borderWidth: 1,
+    borderColor: COLORS.glassBorder,
+    paddingHorizontal: SIZES.md,
+    paddingVertical: SIZES.smd,
+  },
+  noticeText: { fontFamily: FONTS.medium, fontSize: 14, color: COLORS.text.primary, textAlign: 'center' },
   container: {
     flex: 1,
     backgroundColor: COLORS.background,

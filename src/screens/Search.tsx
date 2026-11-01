@@ -22,6 +22,7 @@ import { Track } from '../core/types';
 import { useSearch } from '../hooks/useSearch';
 import { usePlayer } from '../hooks/usePlayer';
 import { DiscoveryService } from '../services/DiscoveryService';
+import { mergeRecent } from '../utils/recentSearches';
 import { useNavigation } from '@react-navigation/native';
 
 const MAX_RECENT = 4;
@@ -81,9 +82,7 @@ export default function SearchScreen() {
       const trimmed = term.trim();
       if (!trimmed) return;
       const prev = DiscoveryService.get().recent;
-      DiscoveryService.saveRecent(
-        [trimmed, ...prev.filter((x) => x.toLowerCase() !== trimmed.toLowerCase())].slice(0, MAX_RECENT)
-      );
+      DiscoveryService.saveRecent(mergeRecent(prev, trimmed, MAX_RECENT));
     },
     [setQuery, searchNow]
   );
