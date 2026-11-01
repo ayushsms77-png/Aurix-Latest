@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { messageFor } from '../core/errors';
 import { EMPTY_SEARCH_RESULTS, SearchFilter, SearchResults } from '../core/types';
+import { DiscoveryService } from '../services/DiscoveryService';
 import { LibraryService } from '../services/LibraryService';
 import { MusicService } from '../services/MusicService';
+import { mergeRecent } from '../utils/recentSearches';
 
 const DEBOUNCE_MS = 350;
+const RECENT_MAX = 4; // keep in step with DiscoveryService
 
 type UseSearch = {
   query: string;
@@ -75,6 +78,11 @@ export function useSearch(): UseSearch {
       setResults(found);
       setIsSearching(false);
       LibraryService.recordSearch(trimmed);
+      // Explore's "Recent searches" reads DiscoveryService, so a search that
+      // finished by itself (typing, no Enter) must be saved there too.
+      if (found.tracks.length || found.artists.length || found.albums.length || found.playlists.length) {
+        DiscoveryService.saveRecent(mergeRecent(DiscoveryService.get().recent, trimmed, RECENT_MAX));
+      }
     } catch (e) {
       if (id !== requestId.current || controller.signal.aborted) return;
 
