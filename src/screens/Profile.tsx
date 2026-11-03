@@ -24,6 +24,8 @@ import {
   Shield,
   Bot,
   ArrowUpRight,
+  Tag,
+  Sparkles,
 } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
@@ -54,11 +56,22 @@ const IG_URL = 'https://www.instagram.com/vivac_ayu';
 // Hardcoded per explicit instruction -- not derived from app.json/expoConfig.
 // Update these two lines manually at release time.
 const APP_VERSION = '17.7.0';
-const APP_BUILD = '069';
-// OTA (EAS Update) info. updateId is null on the APK's embedded bundle, so show 'Embedded'.
-const UPDATE_ID = Updates.updateId ? Updates.updateId.slice(0, 8) : 'Embedded';
+const APP_BUILD = '071';
+// OTA (EAS Update) info, shown under System Information.
 const UPDATE_CHANNEL = Updates.channel || 'none';
 const RUNTIME_VERSION = Updates.runtimeVersion ? Updates.runtimeVersion.slice(0, 8) : 'n/a';
+
+// ---- App Updates section ----
+// Edit these at every release. They ship over the air together with the JS bundle.
+const RELEASE_INFO: { label: string; value: string }[] = [
+  { label: 'Release On', value: '03 Nov 2026' },
+  { label: 'Release Type', value: 'Feature Update' },
+  { label: 'Channel', value: 'Stable' },
+];
+const WHATS_NEW: string[] = [
+  'New App Updates section in Profile.',
+  'Aurix can now get improvements over the air, no reinstall needed.',
+];
 
 // Real installed versions, read from package.json / the native gradle file at
 // the time this was written -- NewPipe Extractor's version is never guessed;
@@ -172,6 +185,8 @@ export default function ProfileScreen() {
   const [showDependencies, setShowDependencies] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showJarvis, setShowJarvis] = useState(false);
+  const [showVersionInfo, setShowVersionInfo] = useState(false);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem('@aurix_profile_pic').then((uri) => {
@@ -320,10 +335,6 @@ export default function ProfileScreen() {
           <View style={[styles.aboutRow, styles.aboutDivider]}>
             <Text style={styles.aboutLabel}>Build</Text>
             <Text style={styles.aboutValue}>{APP_BUILD}</Text>
-          </View>
-          <View style={[styles.aboutRow, styles.aboutDivider]}>
-            <Text style={styles.aboutLabel}>Update</Text>
-            <Text style={styles.aboutValue}>{UPDATE_ID}</Text>
           </View>
           <ListRow label="Source code" onPress={() => open(REPO_URL)} showDivider={false} />
         </View>
@@ -502,6 +513,44 @@ export default function ProfileScreen() {
                   <Text style={styles.infoKey}>{param.name}</Text>
                   <Text style={styles.infoValue}>{param.value}</Text>
                 </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* ---- app updates ---- */}
+        <Text style={styles.sectionLabel}>APP UPDATES</Text>
+        <View style={styles.group}>
+          <ListRow
+            icon={<Tag color={COLORS.text.primary} size={20} />}
+            label="Version Information"
+            onPress={() => setShowVersionInfo((v) => !v)}
+            showDivider={showVersionInfo}
+          />
+          {showVersionInfo && (
+            <View style={styles.infoBlock}>
+              {RELEASE_INFO.map((item) => (
+                <View key={item.label} style={styles.infoLine}>
+                  <Text style={styles.infoKey}>{item.label}</Text>
+                  <Text style={styles.infoValue}>{item.value}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <ListRow
+            icon={<Sparkles color={COLORS.text.primary} size={20} />}
+            label="What's New"
+            subtitle="Explore what's changed in the latest update."
+            onPress={() => setShowWhatsNew((v) => !v)}
+            showDivider={showWhatsNew}
+          />
+          {showWhatsNew && (
+            <View style={styles.infoBlock}>
+              {WHATS_NEW.map((note, i) => (
+                <Text key={i} style={styles.policyText}>
+                  {'\u2022'}  {note}
+                </Text>
               ))}
             </View>
           )}
