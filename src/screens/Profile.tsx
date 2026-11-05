@@ -25,8 +25,8 @@ import {
   Bot,
   ArrowUpRight,
   Tag,
-  Sparkles,
 } from 'lucide-react-native';
+import Svg, { Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -56,7 +56,7 @@ const IG_URL = 'https://www.instagram.com/vivac_ayu';
 // Hardcoded per explicit instruction -- not derived from app.json/expoConfig.
 // Update these two lines manually at release time.
 const APP_VERSION = '17.7.0';
-const APP_BUILD = '071';
+const APP_BUILD = '072';
 // OTA (EAS Update) info, shown under System Information.
 const UPDATE_CHANNEL = Updates.channel || 'none';
 const RUNTIME_VERSION = Updates.runtimeVersion ? Updates.runtimeVersion.slice(0, 8) : 'n/a';
@@ -72,6 +72,28 @@ const WHATS_NEW: string[] = [
   'New App Updates section in Profile.',
   'Aurix can now get improvements over the air, no reinstall needed.',
 ];
+
+// Lemonade glass icon (24x24, lucide-style stroke) used for the What's New row.
+const LemonadeIcon: React.FC<{ size?: number; color?: string }> = ({
+  size = 20,
+  color = COLORS.text.primary,
+}) => (
+  <Svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke={color}
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <Path d="M4 8h12l-1.5 13h-9z" />
+    <Path d="M4.6 13c1.8-1.3 3.6-1.3 5.4 0s3.6 1.3 5.4 0" />
+    <Path d="M8.2 3l1.8 8" />
+    <Path d="M12.2 8A3.4 3.4 0 1 1 15.65 11" />
+  </Svg>
+);
 
 // Real installed versions, read from package.json / the native gradle file at
 // the time this was written -- NewPipe Extractor's version is never guessed;
@@ -339,6 +361,44 @@ export default function ProfileScreen() {
           <ListRow label="Source code" onPress={() => open(REPO_URL)} showDivider={false} />
         </View>
 
+        {/* ---- app updates ---- */}
+        <Text style={styles.sectionLabel}>APP UPDATES</Text>
+        <View style={styles.group}>
+          <ListRow
+            icon={<Tag color={COLORS.text.primary} size={20} />}
+            label="Version Information"
+            onPress={() => setShowVersionInfo((v) => !v)}
+            showDivider={showVersionInfo}
+          />
+          {showVersionInfo && (
+            <View style={styles.infoBlock}>
+              {RELEASE_INFO.map((item) => (
+                <View key={item.label} style={styles.infoLine}>
+                  <Text style={styles.infoKey}>{item.label}</Text>
+                  <Text style={styles.infoValue}>{item.value}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <ListRow
+            icon={<LemonadeIcon size={20} color={COLORS.text.primary} />}
+            label="What's New"
+            onPress={() => setShowWhatsNew((v) => !v)}
+            showDivider={showWhatsNew}
+          />
+          {showWhatsNew && (
+            <View style={styles.infoBlock}>
+              {WHATS_NEW.map((note, i) => (
+                <View key={i} style={styles.noteRow}>
+                  <Text style={styles.noteBullet}>{'\u2022'}</Text>
+                  <Text style={styles.noteText}>{note}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
         {/* ---- development: builder opens as a root-shell terminal card ---- */}
         <Text style={styles.sectionLabel}>DEVELOPMENT</Text>
         <View style={styles.group}>
@@ -513,44 +573,6 @@ export default function ProfileScreen() {
                   <Text style={styles.infoKey}>{param.name}</Text>
                   <Text style={styles.infoValue}>{param.value}</Text>
                 </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* ---- app updates ---- */}
-        <Text style={styles.sectionLabel}>APP UPDATES</Text>
-        <View style={styles.group}>
-          <ListRow
-            icon={<Tag color={COLORS.text.primary} size={20} />}
-            label="Version Information"
-            onPress={() => setShowVersionInfo((v) => !v)}
-            showDivider={showVersionInfo}
-          />
-          {showVersionInfo && (
-            <View style={styles.infoBlock}>
-              {RELEASE_INFO.map((item) => (
-                <View key={item.label} style={styles.infoLine}>
-                  <Text style={styles.infoKey}>{item.label}</Text>
-                  <Text style={styles.infoValue}>{item.value}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          <ListRow
-            icon={<Sparkles color={COLORS.text.primary} size={20} />}
-            label="What's New"
-            subtitle="Explore what's changed in the latest update."
-            onPress={() => setShowWhatsNew((v) => !v)}
-            showDivider={showWhatsNew}
-          />
-          {showWhatsNew && (
-            <View style={styles.infoBlock}>
-              {WHATS_NEW.map((note, i) => (
-                <Text key={i} style={styles.policyText}>
-                  {'\u2022'}  {note}
-                </Text>
               ))}
             </View>
           )}
@@ -765,5 +787,21 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: COLORS.text.secondary,
     marginBottom: SIZES.sm,
+  },
+  /* What's New bullets: fixed-width bullet column so wrapped lines hang under the text. */
+  noteRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: SIZES.sm },
+  noteBullet: {
+    width: 16,
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: COLORS.text.secondary,
+  },
+  noteText: {
+    flex: 1,
+    fontFamily: FONTS.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: COLORS.text.secondary,
   },
 });
